@@ -1,0 +1,97 @@
+{
+  "name": "sporescout.testing-tools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SporeScout Cartridge Subassembly Tester local dashboard app",
+  "author": "BioScout",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "build": "tsc -b && electron-vite build",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "preview": "electron-vite preview",
+    "package": "electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.4",
+    "@emotion/styled": "^11.11.5",
+    "@fontsource/roboto": "^5.1.0",
+    "@mui/icons-material": "^5.15.20",
+    "@mui/material": "^5.15.20",
+    "@serialport/parser-readline": "^13.0.0",
+    "@tanstack/react-router": "^1.58.3",
+    "better-sqlite3": "^12.4.1",
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.6.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "serialport": "^13.0.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.18.13",
+    "@types/react": "^18.3.27",
+    "@types/react-dom": "^18.3.7",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.5.2",
+    "concurrently": "^9.2.1",
+    "electron": "^38.5.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^4.0.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^15.15.0",
+    "jsdom": "^27.2.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^5.4.21",
+    "vitest": "^3.2.4",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "au.com.bioscout.sporescout.testing-tools",
+    "productName": "SporeScout Cartridge Subassembly Tester",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/serialport/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "BioScout",
+        "repo": "sporescout.testing-tools",
+        "private": true
+      }
+    ]
+  }
+}
