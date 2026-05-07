@@ -148,6 +148,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('storage:saveSettings', async (_event, settings) => store.saveSettings(settings))
   ipcMain.handle('storage:saveOverride', async (_event, override) => store.saveOverride(override))
   ipcMain.handle('storage:getSummary', async () => store.getStorageSummary())
+  ipcMain.handle('storage:getHistoricalRecords', async () => store.getHistoricalRecords())
   ipcMain.handle('updates:check', async () => checkForUpdates())
 }
 

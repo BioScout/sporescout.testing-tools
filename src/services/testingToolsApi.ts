@@ -1,4 +1,5 @@
 import {
+  CARTRIDGE_READINESS_COMMAND,
   CARTRIDGE_PROFILE_VERSION,
   DEFAULT_STATION_SETTINGS,
   normalizeStationSettings,
@@ -7,17 +8,24 @@ import {
   type ConnectionMode,
   type GuiEventEnvelope,
   type GuiResponseEnvelope,
+  type HistoricalRecords,
+  type MirroredEventRecord,
+  type OverrideRecord,
   type SerialPortInfo,
   type StationSettings,
+  type StoredCommandRecord,
+  type StoredCommandResponseRecord,
+  type StoredMirroredEventRecord,
   type TestingToolsApi,
 } from '../shared/contracts'
-import { formatGuiEvent, formatGuiResponse, parseSerialLine } from '../shared/serialParser'
+import { formatGuiEvent, formatGuiResponse, mirroredEventRecordFromEnvelope, parseSerialLine } from '../shared/serialParser'
 
 const BROWSER_SERIAL_CHOOSE_PATH = 'WEB_SERIAL_REQUEST'
 const BROWSER_SERIAL_GRANTED_PREFIX = 'WEB_SERIAL_GRANTED_'
 const DEFAULT_BAUD_RATE = 115200
 const SERIAL_RESPONSE_TIMEOUT_MS = 25000
 const BROWSER_SETTINGS_KEY = 'sporescout.testing-tools.stationSettings'
+const BROWSER_HISTORY_KEY = 'sporescout.testing-tools.history'
 
 type BrowserSerialPortInfo = {
   usbVendorId?: number
@@ -59,6 +67,7 @@ let settings: StationSettings = loadBrowserSettings()
 let activeRunUid = ''
 let activeCartridge = ''
 let runCounter = 0
+let browserHistory: HistoricalRecords = loadBrowserHistory()
 let browserConnectionMode: ConnectionMode | undefined
 let browserSerialPort: BrowserSerialPort | null = null
 let browserSerialReader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -108,6 +117,8 @@ const browserApi: TestingToolsApi = {
     return { ok: true }
   },
   async sendCommand(command: string) {
+    recordBrowserCommand(command, browserConnectionMode ?? 'none')
+
     if (browserConnectionMode === 'serial') {
       return sendBrowserSerialCommand(command)
     }
@@ -125,17 +136,25 @@ const browserApi: TestingToolsApi = {
     window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify(settings))
     return settings
   },
-  async saveOverride() {
+  async saveOverride(override: OverrideRecord) {
+    browserHistory = {
+      ...browserHistory,
+      overrides: [override, ...browserHistory.overrides],
+    }
+    saveBrowserHistory()
     return undefined
   },
   async getStorageSummary() {
     return {
       databasePath: 'Browser preview only',
       jsonlPath: 'Browser preview only',
-      eventCount: 0,
-      commandCount: 0,
-      overrideCount: 0,
+      eventCount: browserHistory.events.length,
+      commandCount: browserHistory.commands.length,
+      overrideCount: browserHistory.overrides.length,
     }
+  },
+  async getHistoricalRecords() {
+    return browserHistory
   },
   async checkForUpdates() {
     return {
@@ -317,16 +336,21 @@ function emitLine(line: string): void {
   lineListeners.forEach((listener) => listener(line))
   const parsed = parseSerialLine(line)
   if (parsed.kind === 'gui-event' && parsed.envelope?.type === 'event') {
-    eventListeners.forEach((listener) => listener(parsed.envelope as GuiEventEnvelope))
+    const event = parsed.envelope as GuiEventEnvelope
+    recordBrowserEvent(event, line)
+    eventListeners.forEach((listener) => listener(event))
     return
   }
 
   if (parsed.kind === 'gui-response' && parsed.envelope?.type === 'response') {
-    resolveBrowserPendingResponse(parsed.envelope as GuiResponseEnvelope)
+    const response = parsed.envelope as GuiResponseEnvelope
+    recordBrowserResponse(response, line)
+    resolveBrowserPendingResponse(response)
     return
   }
 
   if (parsed.kind === 'legacy-response' && parsed.legacy) {
+    recordBrowserResponse(parsed.legacy, line)
     resolveBrowserPendingResponse(parsed.legacy)
   }
 }
@@ -392,6 +416,78 @@ function loadBrowserSettings(): StationSettings {
   }
 }
 
+function loadBrowserHistory(): HistoricalRecords {
+  try {
+    const stored = window.localStorage.getItem(BROWSER_HISTORY_KEY)
+    if (!stored) return emptyHistory()
+    const parsed = JSON.parse(stored) as Partial<HistoricalRecords>
+    return {
+      commands: parsed.commands ?? [],
+      responses: parsed.responses ?? [],
+      events: parsed.events ?? [],
+      overrides: parsed.overrides ?? [],
+    }
+  } catch {
+    return emptyHistory()
+  }
+}
+
+function emptyHistory(): HistoricalRecords {
+  return { commands: [], responses: [], events: [], overrides: [] }
+}
+
+function saveBrowserHistory(): void {
+  window.localStorage.setItem(BROWSER_HISTORY_KEY, JSON.stringify(browserHistory))
+}
+
+function recordBrowserCommand(command: string, mode: string): void {
+  const record: StoredCommandRecord = {
+    id: crypto.randomUUID(),
+    command,
+    mode,
+    sent_at: new Date().toISOString(),
+  }
+  browserHistory = {
+    ...browserHistory,
+    commands: [record, ...browserHistory.commands],
+  }
+  saveBrowserHistory()
+}
+
+function recordBrowserResponse(response: GuiResponseEnvelope, rawLine?: string): void {
+  const record: StoredCommandResponseRecord = {
+    id: crypto.randomUUID(),
+    command: response.command,
+    ok: response.ok,
+    response,
+    raw_line: rawLine,
+    received_at: new Date().toISOString(),
+  }
+  browserHistory = {
+    ...browserHistory,
+    responses: [record, ...browserHistory.responses],
+  }
+  saveBrowserHistory()
+}
+
+function recordBrowserEvent(event: GuiEventEnvelope, rawLine?: string): void {
+  const mirroredRecord = mirroredEventRecordFromEnvelope(event, rawLine) as MirroredEventRecord
+  const record: StoredMirroredEventRecord = {
+    id: crypto.randomUUID(),
+    event_name: event.event_name,
+    record: mirroredRecord,
+    run_uid: mirroredRecord.run_uid,
+    cartridge_serial: mirroredRecord.cartridge_serial,
+    created_at: mirroredRecord.local_timestamp,
+    upload_status: mirroredRecord.upload_status,
+  }
+  browserHistory = {
+    ...browserHistory,
+    events: [record, ...browserHistory.events],
+  }
+  saveBrowserHistory()
+}
+
 function buildMockResponse(command: string): GuiResponseEnvelope {
   const base = {
     type: 'response' as const,
@@ -405,6 +501,9 @@ function buildMockResponse(command: string): GuiResponseEnvelope {
 
   if (command === 'system GetFirmwareVersion') {
     return { ...base, result: 5383001 }
+  }
+  if (command === CARTRIDGE_READINESS_COMMAND) {
+    return { ...base, result: buildBrowserReadinessResult(base.firmware_version) }
   }
   if (command.includes('IsConnected') || command.includes('IsLocked')) {
     return { ...base, result: true }
@@ -437,6 +536,30 @@ function buildMockResponse(command: string): GuiResponseEnvelope {
   }
 
   return { ...base, result: 'ok' }
+}
+
+function buildBrowserReadinessResult(firmwareVersion: number) {
+  return {
+    command: 'cartridge_leak readiness',
+    firmware_version: firmwareVersion,
+    hardware_version: 'browser-mock',
+    ready: true,
+    status: 'READY',
+    operator_action: 'Ready to start: test cartridge_leak open <cartridge_serial> <fixture_id> phase1-characterization',
+    checks: {
+      active_run_clear: { ok: true, skipped: false, message: 'no active cartridge_leak run' },
+      idle_state: { ok: true, skipped: false, message: 'firmware state is Idle', detail: { current_state: 'Idle' } },
+      station_self_check: { ok: true, skipped: false, message: 'station dependencies ok' },
+      tester_power: { ok: true, skipped: false, message: '24V Aux is in range', detail: { aux24_v: 24.1 } },
+      cm4_ready: {
+        ok: true,
+        skipped: false,
+        message: 'CM4 is available',
+        detail: { available: true, cm4_state: 'Available', aux_5v_rail_state: 'Enabled', aux5_v: 5.1 },
+      },
+      solenoid_locked: { ok: true, skipped: false, message: 'solenoid reports locked', detail: { is_unlocked: false } },
+    },
+  }
 }
 
 function buildMockEvents(command: string): GuiEventEnvelope[] {

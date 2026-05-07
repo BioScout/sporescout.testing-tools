@@ -1,5 +1,6 @@
 import {
   CARTRIDGE_PROFILE,
+  CARTRIDGE_READINESS_COMMAND,
   type GuiEventEnvelope,
   type GuiResponseEnvelope,
   type MeasurementSummary,
@@ -11,36 +12,50 @@ export const READINESS_ITEMS: ReadinessItem[] = [
   {
     id: 'firmware',
     label: 'Checking firmware version',
-    command: 'system GetFirmwareVersion',
-    info: 'Confirms the tester is running the expected firmware. Command: system GetFirmwareVersion.',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Confirms the tester reports firmware and hardware versions. Command: test cartridge_leak readiness.',
     status: 'pending',
   },
   {
-    id: 'self-test',
-    label: 'Running tester self check',
-    command: 'test self_check',
-    info: 'Runs the built-in tester self check before cartridge testing starts. Command: test self_check.',
+    id: 'active_run_clear',
+    label: 'Checking active run state',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Confirms there is no unfinished cartridge test run before a new cartridge starts.',
     status: 'pending',
   },
   {
-    id: 'power',
-    label: 'Checking tester power',
-    command: 'load_switch_24v_aux_in IsConnected',
-    info: 'Checks that the internal power path needed for the test is available. Command: load_switch_24v_aux_in IsConnected.',
-    status: 'pending',
-  },
-  {
-    id: 'solenoid',
-    label: 'Checking solenoid lock state',
-    command: 'solenoid IsLocked',
-    info: 'Confirms the cartridge lock is in the locked state before the next step. Command: solenoid IsLocked.',
-    status: 'pending',
-  },
-  {
-    id: 'idle',
+    id: 'idle_state',
     label: 'Checking tester idle state',
-    command: 'system GetIdleState',
-    info: 'Confirms the tester is idle before starting the cartridge workflow. Command: system GetIdleState.',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Confirms firmware is in Idle before starting the cartridge workflow.',
+    status: 'pending',
+  },
+  {
+    id: 'station_self_check',
+    label: 'Checking station self test',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Checks station prerequisites used by the cartridge tester, including fan and flow-sensor dependencies.',
+    status: 'pending',
+  },
+  {
+    id: 'tester_power',
+    label: 'Checking tester power',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Checks the tester power needed for cartridge measurements.',
+    status: 'pending',
+  },
+  {
+    id: 'cm4_ready',
+    label: 'Checking CM4 readiness',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Confirms 5V Aux and CM4 availability before any solenoid state is trusted.',
+    status: 'pending',
+  },
+  {
+    id: 'solenoid_locked',
+    label: 'Checking solenoid lock state',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Checks the cartridge lock only after the CM4 readiness check passes.',
     status: 'pending',
   },
 ]
@@ -80,6 +95,49 @@ export function markReadinessItem(
   detail?: string,
 ): ReadinessItem[] {
   return items.map((item) => (item.id === id ? { ...item, status, detail } : item))
+}
+
+export function markAllReadinessItems(items: ReadinessItem[], status: ReadinessItem['status']): ReadinessItem[] {
+  return items.map((item) => ({ ...item, status, detail: undefined }))
+}
+
+export function applyCartridgeReadinessResult(
+  items: ReadinessItem[],
+  result: unknown,
+): { items: ReadinessItem[]; ready: boolean; operatorAction?: string } {
+  const response = asRecord(result)
+  const checks = asRecord(response.checks)
+  const operatorAction = asString(response.operator_action)
+  const ready = response.ready === true || response.status === 'READY'
+
+  return {
+    ready,
+    operatorAction,
+    items: items.map((item) => {
+      if (item.id === 'firmware') {
+        const firmwareVersion = asNumber(response.firmware_version)
+        const hardwareVersion = asString(response.hardware_version)
+        const detail = [firmwareVersion ? `firmware ${firmwareVersion}` : 'firmware reported', hardwareVersion]
+          .filter(Boolean)
+          .join(', ')
+        return { ...item, status: 'passed', detail }
+      }
+
+      const check = asRecord(checks[item.id])
+      if (Object.keys(check).length === 0) {
+        return { ...item, status: 'failed', detail: 'Missing readiness result' }
+      }
+
+      const skipped = check.skipped === true
+      const ok = check.ok === true
+      const message = asString(check.message) ?? (ok ? 'Ready' : 'Needs attention')
+      return {
+        ...item,
+        status: ok ? 'passed' : skipped ? 'pending' : 'failed',
+        detail: message,
+      }
+    }),
+  }
 }
 
 export function buildCartridgeOpenCommand(

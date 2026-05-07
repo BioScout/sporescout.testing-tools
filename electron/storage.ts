@@ -6,9 +6,11 @@ import {
   DEFAULT_STATION_SETTINGS,
   normalizeStationSettings,
   type GuiResponseEnvelope,
+  type HistoricalRecords,
   type MirroredEventRecord,
   type OverrideRecord,
   type StationSettings,
+  type StoredCommandResponseRecord,
   type StorageSummary,
   type UpdateCheckResult,
 } from '../src/shared/contracts'
@@ -156,6 +158,72 @@ export class LocalStorageStore {
       commandCount: this.count('commands'),
       overrideCount: this.count('overrides'),
     }
+  }
+
+  getHistoricalRecords(): HistoricalRecords {
+    const commands = this.db
+      .prepare(
+        `SELECT id, command, mode, sent_at
+         FROM commands
+         ORDER BY sent_at DESC`,
+      )
+      .all() as HistoricalRecords['commands']
+
+    const responses = (this.db
+      .prepare(
+        `SELECT id, command, ok, response_json, raw_line, received_at
+         FROM command_responses
+         ORDER BY received_at DESC`,
+      )
+      .all() as Array<{
+      id: string
+      command: string
+      ok: number
+      response_json: string
+      raw_line: string | null
+      received_at: string
+    }>).map<StoredCommandResponseRecord>((row) => ({
+      id: row.id,
+      command: row.command,
+      ok: Boolean(row.ok),
+      response: JSON.parse(row.response_json) as GuiResponseEnvelope,
+      raw_line: row.raw_line ?? undefined,
+      received_at: row.received_at,
+    }))
+
+    const events = (this.db
+      .prepare(
+        `SELECT id, event_name, record_json, run_uid, cartridge_serial, created_at, upload_status
+         FROM mirrored_events
+         ORDER BY created_at DESC`,
+      )
+      .all() as Array<{
+      id: string
+      event_name: string
+      record_json: string
+      run_uid: string | null
+      cartridge_serial: string | null
+      created_at: string
+      upload_status: MirroredEventRecord['upload_status']
+    }>).map((row) => ({
+      id: row.id,
+      event_name: row.event_name,
+      record: JSON.parse(row.record_json) as MirroredEventRecord,
+      run_uid: row.run_uid ?? undefined,
+      cartridge_serial: row.cartridge_serial ?? undefined,
+      created_at: row.created_at,
+      upload_status: row.upload_status,
+    }))
+
+    const overrides = this.db
+      .prepare(
+        `SELECT id, run_uid, cartridge_serial, operator, action, reason, created_at
+         FROM overrides
+         ORDER BY created_at DESC`,
+      )
+      .all() as OverrideRecord[]
+
+    return { commands, responses, events, overrides }
   }
 
   close(): void {

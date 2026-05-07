@@ -1,4 +1,5 @@
 import {
+  CARTRIDGE_READINESS_COMMAND,
   CARTRIDGE_PROFILE_VERSION,
   type GuiEventEnvelope,
   type GuiResponseEnvelope,
@@ -41,6 +42,10 @@ export class MockSerialDevice {
 
     if (command === 'system GetFirmwareVersion') {
       return { ...base, result: this.firmwareVersion }
+    }
+
+    if (command === CARTRIDGE_READINESS_COMMAND) {
+      return { ...base, result: buildReadinessResult(this.firmwareVersion) }
     }
 
     if (command.includes('load_switch_24v_aux_in IsConnected')) {
@@ -161,5 +166,29 @@ export class MockSerialDevice {
         dt_ms: 100,
       },
     }
+  }
+}
+
+function buildReadinessResult(firmwareVersion: number) {
+  return {
+    command: 'cartridge_leak readiness',
+    firmware_version: firmwareVersion,
+    hardware_version: 'mock',
+    ready: true,
+    status: 'READY',
+    operator_action: 'Ready to start: test cartridge_leak open <cartridge_serial> <fixture_id> phase1-characterization',
+    checks: {
+      active_run_clear: { ok: true, skipped: false, message: 'no active cartridge_leak run' },
+      idle_state: { ok: true, skipped: false, message: 'firmware state is Idle', detail: { current_state: 'Idle' } },
+      station_self_check: { ok: true, skipped: false, message: 'station dependencies ok' },
+      tester_power: { ok: true, skipped: false, message: '24V Aux is in range', detail: { aux24_v: 24.1 } },
+      cm4_ready: {
+        ok: true,
+        skipped: false,
+        message: 'CM4 is available',
+        detail: { available: true, cm4_state: 'Available', aux_5v_rail_state: 'Enabled', aux5_v: 5.1 },
+      },
+      solenoid_locked: { ok: true, skipped: false, message: 'solenoid reports locked', detail: { is_unlocked: false } },
+    },
   }
 }

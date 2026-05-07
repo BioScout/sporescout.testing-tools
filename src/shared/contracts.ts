@@ -23,6 +23,7 @@ export const DEFAULT_STATION_SETTINGS: StationSettings = {
 export const ENGINEERING_PASSWORD = 'Banana12!'
 export const CARTRIDGE_PROFILE = 'phase1-characterization'
 export const CARTRIDGE_PROFILE_VERSION = 'phase1-characterization.v2'
+export const CARTRIDGE_READINESS_COMMAND = 'test cartridge_leak readiness'
 
 export type ConnectionMode = 'mock' | 'serial'
 export type DeviceState = 'disconnected' | 'connecting' | 'ready' | 'busy' | 'fault'
@@ -209,6 +210,39 @@ export interface OverrideRecord {
   created_at: string
 }
 
+export interface StoredCommandRecord {
+  id: string
+  command: string
+  mode: string
+  sent_at: string
+}
+
+export interface StoredCommandResponseRecord {
+  id: string
+  command: string
+  ok: boolean
+  response: GuiResponseEnvelope
+  raw_line?: string
+  received_at: string
+}
+
+export interface StoredMirroredEventRecord {
+  id: string
+  event_name: string
+  record: MirroredEventRecord
+  run_uid?: string
+  cartridge_serial?: string
+  created_at: string
+  upload_status: MirroredEventRecord['upload_status']
+}
+
+export interface HistoricalRecords {
+  commands: StoredCommandRecord[]
+  responses: StoredCommandResponseRecord[]
+  events: StoredMirroredEventRecord[]
+  overrides: OverrideRecord[]
+}
+
 export interface StorageSummary {
   databasePath: string
   jsonlPath: string
@@ -233,6 +267,7 @@ export interface TestingToolsApi {
   saveSettings: (settings: StationSettings) => Promise<StationSettings>
   saveOverride: (override: OverrideRecord) => Promise<void>
   getStorageSummary: () => Promise<StorageSummary>
+  getHistoricalRecords: () => Promise<HistoricalRecords>
   checkForUpdates: () => Promise<UpdateCheckResult>
   onSerialLine: (callback: (line: string) => void) => () => void
   onDeviceEvent: (callback: (event: GuiEventEnvelope) => void) => () => void

@@ -2,7 +2,6 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone'
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
-import AddIcon from '@mui/icons-material/Add'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import KeyIcon from '@mui/icons-material/Key'
 import LockIcon from '@mui/icons-material/Lock'
@@ -52,8 +51,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_STATION_SETTINGS,
   ENGINEERING_PASSWORD,
+  CARTRIDGE_READINESS_COMMAND,
   type ConnectionMode,
   type GuiEventEnvelope,
+  type HistoricalRecords,
   type MeasurementSummary,
   type OverrideRecord,
   type ReadinessItem,
@@ -67,13 +68,14 @@ import { explainCartridgeSerial, isValidCartridgeSerial, normalizeCartridgeSeria
 import { parseSerialLine } from '../../shared/serialParser'
 import {
   FLOW_STEPS,
+  applyCartridgeReadinessResult,
   buildCartridgeOpenCommand,
   buildCartridgePhaseCommand,
   buildReadinessItems,
   extractGuidance,
   extractMeasurement,
   extractRunUid,
-  markReadinessItem,
+  markAllReadinessItems,
   progressLabel,
   type WorkflowStepId,
 } from '../../shared/workflow'
@@ -122,6 +124,12 @@ export function CartridgeSubassemblyPage() {
   const [overrideReason, setOverrideReason] = useState('')
   const [overrideAction, setOverrideAction] = useState('Repeat measurement')
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null)
+  const [historicalRecords, setHistoricalRecords] = useState<HistoricalRecords>({
+    commands: [],
+    responses: [],
+    events: [],
+    overrides: [],
+  })
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult>({
     checked_at: '',
     status: 'idle',
@@ -168,15 +176,22 @@ export function CartridgeSubassemblyPage() {
       setStorageSummary(summary)
     })
 
+    api.getHistoricalRecords().then((records) => {
+      if (!mounted) return
+      setHistoricalRecords(records)
+    })
+
     const removeLineListener = api.onSerialLine((line) => {
       setRawLines((current) => [line, ...current].slice(0, 120))
       const parsed = parseSerialLine(line)
       if (parsed.kind === 'gui-response' && parsed.envelope?.type === 'response') {
+        void refreshLocalRecords()
         setLatestAction(`${parsed.envelope.command}: ${parsed.envelope.ok ? 'ok' : 'failed'}`)
       }
     })
 
     const removeEventListener = api.onDeviceEvent((event) => {
+      void refreshLocalRecords()
       setEvents((current) => [event, ...current].slice(0, 120))
       const measurement = extractMeasurement(event)
       if (measurement) {
@@ -213,6 +228,12 @@ export function CartridgeSubassemblyPage() {
     }))
   }, [currentStep, faultText])
 
+  async function refreshLocalRecords() {
+    const [summary, records] = await Promise.all([api.getStorageSummary(), api.getHistoricalRecords()])
+    setStorageSummary(summary)
+    setHistoricalRecords(records)
+  }
+
   async function connectTester() {
     setFaultText('')
     setDeviceStatus('Connecting')
@@ -232,30 +253,35 @@ export function CartridgeSubassemblyPage() {
   }
 
   async function runReadiness() {
-    let items = buildReadinessItems()
+    const items = buildReadinessItems()
     setReadiness(items)
     setLatestAction('Running tester readiness checks.')
 
-    for (const item of items) {
-      items = markReadinessItem(items, item.id, 'running')
-      setReadiness(items)
-      const result = await api.sendCommand(item.command)
-      const response = result.response
-      if (!result.accepted || !response?.ok) {
-        items = markReadinessItem(items, item.id, 'failed', response?.error ?? result.error ?? 'No response')
-        setReadiness(items)
-        setFaultText(`${item.label} failed.`)
-        setDeviceStatus('Fault')
-        return
-      }
+    setReadiness(markAllReadinessItems(items, 'running'))
+    const result = await api.sendCommand(CARTRIDGE_READINESS_COMMAND)
+    const response = result.response
+    if (!result.accepted || !response?.ok) {
+      const failedItems = markAllReadinessItems(items, 'failed').map((item) => ({
+        ...item,
+        detail: response?.error ?? result.error ?? 'No response',
+      }))
+      setReadiness(failedItems)
+      setFaultText('Tester readiness failed.')
+      setDeviceStatus('Fault')
+      return
+    }
 
-      items = markReadinessItem(items, item.id, 'passed', 'Ready')
-      setReadiness(items)
+    const readinessResult = applyCartridgeReadinessResult(items, response.result)
+    setReadiness(readinessResult.items)
+    if (!readinessResult.ready) {
+      setFaultText(readinessResult.operatorAction ?? 'Tester is not ready.')
+      setDeviceStatus('Fault')
+      return
     }
 
     setDeviceStatus('Ready')
     setCurrentStep('insert')
-    setLatestAction('Tester ready. Insert cartridge and scan serial.')
+    setLatestAction(readinessResult.operatorAction ?? 'Tester ready. Insert cartridge and scan serial.')
   }
 
   function acceptCartridgeScan(value: string) {
@@ -382,7 +408,7 @@ export function CartridgeSubassemblyPage() {
     await api.saveOverride(override)
     setOverrideReason('')
     setLatestAction(`Engineering override recorded: ${overrideAction}.`)
-    setStorageSummary(await api.getStorageSummary())
+    await refreshLocalRecords()
   }
 
   async function saveStationSettings(nextSettings: StationSettings) {
@@ -476,8 +502,7 @@ export function CartridgeSubassemblyPage() {
               options={settings.operators}
               required
               error={!operator.trim()}
-              info="Required for every run. Select your name, or type it and click + to add it to this station."
-              addLabel="Add operator"
+              info="Required for every run. Select your name, or type a new name and press Enter."
               onValueChange={setOperator}
               onCommit={(value) => addSettingOption('operators', value)}
             />
@@ -487,13 +512,12 @@ export function CartridgeSubassemblyPage() {
               value={batch}
               options={settings.batches}
               required
-              info="Batch is stored with every local payload. Type a new batch and click + to add it; the last selected batch becomes the default."
-              addLabel="Add batch"
+              info="Batch is stored with every local payload. Type a new batch and press Enter to save it as the default."
               onValueChange={setBatch}
               onCommit={updateBatch}
             />
 
-            <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Tooltip title="Use Serial for a real tester over USB. Mock runs the UI workflow without hardware.">
               <FormControl size="small" fullWidth>
                 <InputLabel>Mode</InputLabel>
                 <Select label="Mode" value={mode} onChange={(event) => setMode(event.target.value as ConnectionMode)}>
@@ -501,10 +525,9 @@ export function CartridgeSubassemblyPage() {
                   <MenuItem value="serial">Serial</MenuItem>
                 </Select>
               </FormControl>
-              <InfoButton title="Use Serial for a real tester over USB. Mock runs the UI workflow without hardware." />
-            </Stack>
+            </Tooltip>
 
-            <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Tooltip title="Select the USB serial connection for the tester. In browser testing, choose the serial port when the browser prompt opens.">
               <FormControl size="small" fullWidth disabled={mode === 'mock'}>
                 <InputLabel>COM port</InputLabel>
                 <Select label="COM port" value={selectedPort} onChange={(event) => setSelectedPort(event.target.value)}>
@@ -515,8 +538,7 @@ export function CartridgeSubassemblyPage() {
                   ))}
                 </Select>
               </FormControl>
-              <InfoButton title="Select the USB serial connection for the tester. In browser testing, choose the serial port when the browser prompt opens." />
-            </Stack>
+            </Tooltip>
 
             <Tooltip title="Connect tester and run readiness">
               <span>
@@ -545,8 +567,7 @@ export function CartridgeSubassemblyPage() {
               value={testerDeviceSerial}
               options={settings.testerDeviceSerials}
               required
-              info="Serial on the complete tester/electronics assembly. This records which tester produced the run."
-              addLabel="Add tester serial"
+              info="Serial on the complete tester/electronics assembly. Type a replacement tester serial and press Enter to save it."
               onValueChange={setTesterDeviceSerial}
               onCommit={updateTesterSerial}
             />
@@ -555,8 +576,7 @@ export function CartridgeSubassemblyPage() {
               label="Enclosure base ID"
               value={settings.defaultEnclosureBaseId}
               options={settings.enclosureBaseIds}
-              info="Mechanical mating feature used during the open measurement. Expected format: SS-P-001-XXX-YYYY."
-              addLabel="Add enclosure base ID"
+              info="Mechanical mating feature used during the open measurement. Expected format: SS-P-001-XXX-YYYY. Press Enter to save a new ID."
               onValueChange={(value) => setSettings((current) => ({ ...current, defaultEnclosureBaseId: value }))}
               onCommit={(value) => commitSettingSelection('defaultEnclosureBaseId', 'enclosureBaseIds', value)}
             />
@@ -565,8 +585,7 @@ export function CartridgeSubassemblyPage() {
               label="Nozzle ID"
               value={settings.defaultNozzleId}
               options={settings.nozzleIds}
-              info="Nozzle installed at this station. Change only when a nozzle is replaced or another station setup is used."
-              addLabel="Add nozzle ID"
+              info="Nozzle installed at this station. Type a new nozzle ID and press Enter only when the nozzle changes."
               onValueChange={(value) => setSettings((current) => ({ ...current, defaultNozzleId: value }))}
               onCommit={(value) => commitSettingSelection('defaultNozzleId', 'nozzleIds', value)}
             />
@@ -575,8 +594,7 @@ export function CartridgeSubassemblyPage() {
               label="Seal ID"
               value={settings.defaultSealFixtureId}
               options={settings.sealFixtureIds}
-              info="Seal installed at this station. Change only when a seal is replaced or another station setup is used."
-              addLabel="Add seal ID"
+              info="Seal installed at this station. Type a new seal ID and press Enter only when the seal changes."
               onValueChange={(value) => setSettings((current) => ({ ...current, defaultSealFixtureId: value }))}
               onCommit={(value) => commitSettingSelection('defaultSealFixtureId', 'sealFixtureIds', value)}
             />
@@ -666,6 +684,12 @@ export function CartridgeSubassemblyPage() {
           <Typography variant="body2">{latestAction}</Typography>
         </Stack>
       </Paper>
+
+      <HistoricalRecordsPanel
+        records={historicalRecords}
+        storageSummary={storageSummary}
+        onRefresh={refreshLocalRecords}
+      />
 
       <EngineeringPasswordDialog
         open={passwordDialogOpen}
@@ -881,12 +905,16 @@ function ReadinessList({ items }: { items: ReadinessItem[] }) {
             )}
           </ListItemIcon>
           <ListItemText
-            primary={item.label}
+            primary={
+              <Stack component="span" direction="row" alignItems="center" spacing={0.75}>
+                <Box component="span">{item.label}</Box>
+                <InlineInfoIcon title={item.info} />
+              </Stack>
+            }
             secondary={readinessStatusText(item)}
             primaryTypographyProps={{ variant: 'body2' }}
             secondaryTypographyProps={{ variant: 'caption' }}
           />
-          <InfoButton title={item.info} />
         </ListItem>
       ))}
     </List>
@@ -898,7 +926,6 @@ function EditableConfigField(props: {
   value: string
   options: string[]
   info: string
-  addLabel: string
   onValueChange: (value: string) => void
   onCommit: (value: string) => void | Promise<void>
   required?: boolean
@@ -913,54 +940,65 @@ function EditableConfigField(props: {
   }
 
   return (
-    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
-      <Autocomplete
-        freeSolo
-        options={props.options}
-        value={props.value}
-        inputValue={props.value}
-        onChange={(_event, value) => {
-          const nextValue = value ?? ''
-          props.onValueChange(nextValue)
-          if (nextValue.trim()) {
-            void props.onCommit(nextValue)
-          }
-        }}
-        onInputChange={(_event, value) => props.onValueChange(value)}
-        sx={{ flex: 1, minWidth: 0 }}
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={props.label}
-            required={props.required}
-            size="small"
-            error={props.error}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                commit()
-              }
-            }}
-          />
-        )}
-      />
-      <InfoButton title={props.info} />
-      <Tooltip title={trimmedValue ? props.addLabel : `Type a ${props.label.toLowerCase()} first`}>
-        <span>
-          <IconButton size="small" onClick={commit} disabled={!trimmedValue} aria-label={props.addLabel}>
-            <AddIcon fontSize="small" />
-          </IconButton>
-        </span>
-      </Tooltip>
-    </Stack>
+    <Autocomplete
+      freeSolo
+      options={props.options}
+      value={props.value}
+      inputValue={props.value}
+      onChange={(_event, value) => {
+        const nextValue = value ?? ''
+        props.onValueChange(nextValue)
+        if (nextValue.trim()) {
+          void props.onCommit(nextValue)
+        }
+      }}
+      onInputChange={(_event, value) => props.onValueChange(value)}
+      sx={{ minWidth: 0 }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={props.label}
+          required={props.required}
+          size="small"
+          error={props.error}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              commit()
+            }
+          }}
+          InputProps={{
+            ...params.InputProps,
+            endAdornment: (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                <InlineInfoIcon title={props.info} />
+                {params.InputProps.endAdornment}
+              </Box>
+            ),
+          }}
+        />
+      )}
+    />
   )
 }
 
-function InfoButton({ title }: { title: string }) {
+function InlineInfoIcon({ title }: { title: string }) {
   return (
     <Tooltip title={title} enterDelay={250}>
-      <IconButton size="small" aria-label="Help" sx={{ color: 'text.secondary', flexShrink: 0 }}>
-        <InfoOutlinedIcon fontSize="small" />
-      </IconButton>
+      <Box
+        component="span"
+        aria-label="Help"
+        sx={{
+          alignItems: 'center',
+          color: 'text.secondary',
+          cursor: 'help',
+          display: 'inline-flex',
+          flexShrink: 0,
+          lineHeight: 0,
+        }}
+      >
+        <InfoOutlinedIcon sx={{ fontSize: 18 }} />
+      </Box>
     </Tooltip>
   )
 }
@@ -970,6 +1008,75 @@ function readinessStatusText(item: ReadinessItem): string {
   if (item.status === 'passed') return item.detail ?? 'Ready'
   if (item.status === 'failed') return item.detail ?? 'Needs attention'
   return 'Waiting'
+}
+
+function HistoricalRecordsPanel(props: {
+  records: HistoricalRecords
+  storageSummary: StorageSummary | null
+  onRefresh: () => Promise<void>
+}) {
+  const sections = [
+    {
+      title: `Mirrored events (${props.records.events.length})`,
+      empty: 'No mirrored events stored yet.',
+      records: props.records.events,
+    },
+    {
+      title: `Command responses (${props.records.responses.length})`,
+      empty: 'No command responses stored yet.',
+      records: props.records.responses,
+    },
+    {
+      title: `Commands (${props.records.commands.length})`,
+      empty: 'No commands stored yet.',
+      records: props.records.commands,
+    },
+    {
+      title: `Overrides (${props.records.overrides.length})`,
+      empty: 'No overrides stored yet.',
+      records: props.records.overrides,
+    },
+  ]
+
+  return (
+    <Accordion disableGutters>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+          <Typography variant="subtitle2">Historical records</Typography>
+          <Chip size="small" label={`${props.records.events.length} events`} />
+          <Chip size="small" label={`${props.records.responses.length} responses`} />
+          <Chip size="small" label={`${props.records.commands.length} commands`} />
+        </Stack>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Stack spacing={1.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }}>
+            <Button size="small" startIcon={<RefreshIcon />} onClick={props.onRefresh}>
+              Refresh records
+            </Button>
+            <Typography variant="caption" color="text.secondary">
+              Full local records are shown below. SQLite: {props.storageSummary?.databasePath ?? 'not loaded'}.
+            </Typography>
+          </Stack>
+
+          {sections.map((section) => (
+            <Accordion key={section.title} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="body2">{section.title}</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <LogBlock
+                  lines={section.records.map((record) => JSON.stringify(record, null, 2))}
+                  empty={section.empty}
+                  maxHeight={360}
+                />
+              </AccordionDetails>
+            </Accordion>
+          ))}
+        </Stack>
+      </AccordionDetails>
+    </Accordion>
+  )
 }
 
 function EngineeringPasswordDialog(props: {
@@ -1218,7 +1325,7 @@ function MeasurementTable({ measurements, dense = false }: { measurements: Recor
   )
 }
 
-function LogBlock({ lines, empty }: { lines: string[]; empty: string }) {
+function LogBlock({ lines, empty, maxHeight = 260 }: { lines: string[]; empty: string; maxHeight?: number }) {
   return (
     <Box
       component="pre"
@@ -1226,7 +1333,7 @@ function LogBlock({ lines, empty }: { lines: string[]; empty: string }) {
         m: 0,
         p: 1.5,
         minHeight: 160,
-        maxHeight: 260,
+        maxHeight,
         overflow: 'auto',
         bgcolor: 'grey.50',
         border: '1px solid',

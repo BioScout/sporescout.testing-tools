@@ -16,6 +16,7 @@ const api: TestingToolsApi = {
   saveSettings: (settings: StationSettings) => ipcRenderer.invoke('storage:saveSettings', settings),
   saveOverride: (override: OverrideRecord) => ipcRenderer.invoke('storage:saveOverride', override),
   getStorageSummary: () => ipcRenderer.invoke('storage:getSummary'),
+  getHistoricalRecords: () => ipcRenderer.invoke('storage:getHistoricalRecords'),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),
   onSerialLine: (callback: (line: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line)
