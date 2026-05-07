@@ -10,7 +10,7 @@ describe('cartridge serial validation', () => {
     expect(normalizeCartridgeSerial(' ss-sa-007-031-0134 ')).toBe('SS-SA-007-031-0134')
   })
 
-  it('rejects non-cartridge fixture style values', () => {
+  it('rejects non-cartridge hardware ID values', () => {
     expect(isValidCartridgeSerial('NOZL-0001')).toBe(false)
     expect(explainCartridgeSerial('NOZL-0001')).toBe('Cartridge must start with SS-SA-007-.')
   })

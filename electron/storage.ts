@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   DEFAULT_STATION_SETTINGS,
+  normalizeStationSettings,
   type GuiResponseEnvelope,
   type MirroredEventRecord,
   type OverrideRecord,
@@ -37,10 +38,11 @@ export class LocalStorageStore {
       return DEFAULT_STATION_SETTINGS
     }
 
-    return { ...DEFAULT_STATION_SETTINGS, ...JSON.parse(row.value_json) }
+    return normalizeStationSettings(JSON.parse(row.value_json))
   }
 
   saveSettings(settings: StationSettings): StationSettings {
+    const normalizedSettings = normalizeStationSettings(settings)
     this.db
       .prepare(
         `INSERT INTO station_settings (key, value_json, updated_at)
@@ -50,11 +52,11 @@ export class LocalStorageStore {
            updated_at = excluded.updated_at`,
       )
       .run({
-        value_json: JSON.stringify(settings),
+        value_json: JSON.stringify(normalizedSettings),
         updated_at: new Date().toISOString(),
       })
 
-    return settings
+    return normalizedSettings
   }
 
   saveCommand(command: string, mode: string): string {

@@ -7,10 +7,12 @@ export const DASHBOARD_SECONDARY = '#f2a108'
 
 export const DEFAULT_STATION_SETTINGS: StationSettings = {
   stationId: 'STATION-001',
-  fixtureIds: ['FIX-0001'],
+  testerDeviceSerials: ['SS-A-001-101A-0013', 'SS-A-001-101A-0122'],
+  defaultTesterDeviceSerial: 'SS-A-001-101A-0013',
+  enclosureBaseIds: ['SS-P-001-101-0001'],
   nozzleIds: ['NOZL-0001'],
   sealFixtureIds: ['SEAL-0001'],
-  defaultFixtureId: 'FIX-0001',
+  defaultEnclosureBaseId: 'SS-P-001-101-0001',
   defaultNozzleId: 'NOZL-0001',
   defaultSealFixtureId: 'SEAL-0001',
   operators: [],
@@ -29,15 +31,69 @@ export type TestPhase = 'open' | 'nozzle' | 'sealed'
 
 export interface StationSettings {
   stationId: string
-  fixtureIds: string[]
+  testerDeviceSerials: string[]
+  defaultTesterDeviceSerial: string
+  enclosureBaseIds: string[]
   nozzleIds: string[]
   sealFixtureIds: string[]
-  defaultFixtureId: string
+  defaultEnclosureBaseId: string
   defaultNozzleId: string
   defaultSealFixtureId: string
   operators: string[]
   batches: string[]
   latestBatch: string
+}
+
+export function normalizeStationSettings(value?: Partial<StationSettings> | null): StationSettings {
+  const legacy = value as Partial<StationSettings> & {
+    fixtureIds?: string[]
+    defaultFixtureId?: string
+  } | null | undefined
+
+  const merged: StationSettings = {
+    ...DEFAULT_STATION_SETTINGS,
+    ...value,
+    testerDeviceSerials: uniqueNonEmpty([
+      ...(value?.testerDeviceSerials ?? []),
+      ...DEFAULT_STATION_SETTINGS.testerDeviceSerials,
+    ]),
+    enclosureBaseIds: uniqueNonEmpty([
+      ...(value?.enclosureBaseIds ?? legacy?.fixtureIds ?? []).filter(isEnclosureBaseId),
+      DEFAULT_STATION_SETTINGS.defaultEnclosureBaseId,
+    ]),
+    nozzleIds: uniqueNonEmpty([...(value?.nozzleIds ?? []), DEFAULT_STATION_SETTINGS.defaultNozzleId]),
+    sealFixtureIds: uniqueNonEmpty([...(value?.sealFixtureIds ?? []), DEFAULT_STATION_SETTINGS.defaultSealFixtureId]),
+    operators: uniqueNonEmpty(value?.operators ?? []),
+    batches: uniqueNonEmpty([...(value?.batches ?? []), DEFAULT_STATION_SETTINGS.latestBatch]),
+  }
+
+  if (!value?.defaultEnclosureBaseId && legacy?.defaultFixtureId && isEnclosureBaseId(legacy.defaultFixtureId)) {
+    merged.defaultEnclosureBaseId = legacy.defaultFixtureId
+  }
+
+  merged.defaultTesterDeviceSerial = ensureKnownDefault(
+    merged.defaultTesterDeviceSerial,
+    merged.testerDeviceSerials,
+    DEFAULT_STATION_SETTINGS.defaultTesterDeviceSerial,
+  )
+  merged.defaultEnclosureBaseId = ensureKnownDefault(
+    isEnclosureBaseId(merged.defaultEnclosureBaseId) ? merged.defaultEnclosureBaseId : '',
+    merged.enclosureBaseIds,
+    DEFAULT_STATION_SETTINGS.defaultEnclosureBaseId,
+  )
+  merged.defaultNozzleId = ensureKnownDefault(
+    merged.defaultNozzleId,
+    merged.nozzleIds,
+    DEFAULT_STATION_SETTINGS.defaultNozzleId,
+  )
+  merged.defaultSealFixtureId = ensureKnownDefault(
+    merged.defaultSealFixtureId,
+    merged.sealFixtureIds,
+    DEFAULT_STATION_SETTINGS.defaultSealFixtureId,
+  )
+  merged.latestBatch = ensureKnownDefault(merged.latestBatch, merged.batches, DEFAULT_STATION_SETTINGS.latestBatch)
+
+  return merged
 }
 
 export interface SerialPortInfo {
@@ -95,6 +151,7 @@ export interface ReadinessItem {
   id: string
   label: string
   command: string
+  info: string
   status: ReadinessStatus
   detail?: string
 }
@@ -119,7 +176,7 @@ export interface CartridgeRun {
   runId: string
   runUid?: string
   cartridgeSerial?: string
-  fixtureId: string
+  enclosureBaseId: string
   nozzleId: string
   sealFixtureId: string
   startedAt: string
@@ -179,4 +236,17 @@ export interface TestingToolsApi {
   checkForUpdates: () => Promise<UpdateCheckResult>
   onSerialLine: (callback: (line: string) => void) => () => void
   onDeviceEvent: (callback: (event: GuiEventEnvelope) => void) => () => void
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+}
+
+function isEnclosureBaseId(value: string): boolean {
+  return /^SS-P-001-\d{3}-\d{4}$/i.test(value.trim())
+}
+
+function ensureKnownDefault(value: string, options: string[], fallback: string): string {
+  const trimmed = value.trim()
+  return trimmed || options[0] || fallback
 }

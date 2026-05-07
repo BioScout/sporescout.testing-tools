@@ -9,8 +9,8 @@ import {
 
 describe('cartridge workflow helpers', () => {
   it('builds the strict manual firmware commands', () => {
-    expect(buildCartridgeOpenCommand('SS-SA-007-031-0134', 'FIX-0001')).toBe(
-      'test cartridge_leak open SS-SA-007-031-0134 FIX-0001 phase1-characterization',
+    expect(buildCartridgeOpenCommand('SS-SA-007-031-0134', 'SS-P-001-101-0001')).toBe(
+      'test cartridge_leak open SS-SA-007-031-0134 SS-P-001-101-0001 phase1-characterization',
     )
     expect(buildCartridgePhaseCommand('nozzle', 'run-1', 'NOZL-0001')).toBe(
       'test cartridge_leak nozzle run-1 NOZL-0001',
@@ -24,7 +24,7 @@ describe('cartridge workflow helpers', () => {
     const response: GuiResponseEnvelope = {
       type: 'response',
       ok: true,
-      command: 'test cartridge_leak open SS-SA-007-031-0134 FIX-0001 phase1-characterization',
+      command: 'test cartridge_leak open SS-SA-007-031-0134 SS-P-001-101-0001 phase1-characterization',
       result: { run_uid: 'firmware-run-42' },
     }
 

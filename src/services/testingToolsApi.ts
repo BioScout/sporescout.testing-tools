@@ -1,6 +1,7 @@
 import {
   CARTRIDGE_PROFILE_VERSION,
   DEFAULT_STATION_SETTINGS,
+  normalizeStationSettings,
   type CommandDispatchResult,
   type ConnectRequest,
   type ConnectionMode,
@@ -16,6 +17,7 @@ const BROWSER_SERIAL_CHOOSE_PATH = 'WEB_SERIAL_REQUEST'
 const BROWSER_SERIAL_GRANTED_PREFIX = 'WEB_SERIAL_GRANTED_'
 const DEFAULT_BAUD_RATE = 115200
 const SERIAL_RESPONSE_TIMEOUT_MS = 25000
+const BROWSER_SETTINGS_KEY = 'sporescout.testing-tools.stationSettings'
 
 type BrowserSerialPortInfo = {
   usbVendorId?: number
@@ -53,7 +55,7 @@ export function getDefaultConnectionMode(): ConnectionMode {
   return window.testingTools || getBrowserSerial() ? 'serial' : 'mock'
 }
 
-let settings: StationSettings = DEFAULT_STATION_SETTINGS
+let settings: StationSettings = loadBrowserSettings()
 let activeRunUid = ''
 let activeCartridge = ''
 let runCounter = 0
@@ -79,7 +81,7 @@ const browserApi: TestingToolsApi = {
       ...grantedBrowserPorts.map((port, index) => browserPortInfo(port, index)),
       {
         path: BROWSER_SERIAL_CHOOSE_PATH,
-        friendlyName: 'Choose serial port in browser',
+        friendlyName: 'Choose serial port',
       },
     ]
   },
@@ -119,7 +121,8 @@ const browserApi: TestingToolsApi = {
     return settings
   },
   async saveSettings(nextSettings: StationSettings) {
-    settings = nextSettings
+    settings = normalizeStationSettings(nextSettings)
+    window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify(settings))
     return settings
   },
   async saveOverride() {
@@ -378,6 +381,15 @@ function describeBrowserPort(port: BrowserSerialPort, fallback?: string): string
   }
 
   return fallback ?? 'Browser serial port'
+}
+
+function loadBrowserSettings(): StationSettings {
+  try {
+    const stored = window.localStorage.getItem(BROWSER_SETTINGS_KEY)
+    return normalizeStationSettings(stored ? JSON.parse(stored) : DEFAULT_STATION_SETTINGS)
+  } catch {
+    return DEFAULT_STATION_SETTINGS
+  }
 }
 
 function buildMockResponse(command: string): GuiResponseEnvelope {

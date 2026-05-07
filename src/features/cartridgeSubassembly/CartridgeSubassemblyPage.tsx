@@ -2,6 +2,8 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadDoneIcon from '@mui/icons-material/DownloadDone'
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
+import AddIcon from '@mui/icons-material/Add'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import KeyIcon from '@mui/icons-material/Key'
 import LockIcon from '@mui/icons-material/Lock'
 import LockOpenIcon from '@mui/icons-material/LockOpen'
@@ -100,6 +102,7 @@ export function CartridgeSubassemblyPage() {
   const [deviceStatus, setDeviceStatus] = useState('Disconnected')
   const [operator, setOperator] = useState('')
   const [batch, setBatch] = useState('')
+  const [testerDeviceSerial, setTesterDeviceSerial] = useState(DEFAULT_STATION_SETTINGS.defaultTesterDeviceSerial)
   const [currentStep, setCurrentStep] = useState<WorkflowStepId>('connect')
   const [readiness, setReadiness] = useState<ReadinessItem[]>(buildReadinessItems())
   const [cartridgeInput, setCartridgeInput] = useState('')
@@ -132,6 +135,7 @@ export function CartridgeSubassemblyPage() {
     connected &&
     operator.trim().length > 0 &&
     batch.trim().length > 0 &&
+    testerDeviceSerial.trim().length > 0 &&
     cartridgeSerial.length > 0 &&
     isValidCartridgeSerial(cartridgeSerial)
 
@@ -142,6 +146,7 @@ export function CartridgeSubassemblyPage() {
       if (!mounted) return
       setSettings(loadedSettings)
       setBatch(loadedSettings.latestBatch)
+      setTesterDeviceSerial(loadedSettings.defaultTesterDeviceSerial)
     })
 
     api.listSerialPorts().then((availablePorts) => {
@@ -244,7 +249,7 @@ export function CartridgeSubassemblyPage() {
         return
       }
 
-      items = markReadinessItem(items, item.id, 'passed', formatReadinessDetail(response.result))
+      items = markReadinessItem(items, item.id, 'passed', 'Ready')
       setReadiness(items)
     }
 
@@ -267,7 +272,7 @@ export function CartridgeSubassemblyPage() {
 
   async function startTest() {
     if (!canStartTest) {
-      setFaultText('Operator, batch, and a valid cartridge scan are required.')
+      setFaultText('Operator, batch, tester serial, and a valid cartridge scan are required.')
       return
     }
 
@@ -277,7 +282,7 @@ export function CartridgeSubassemblyPage() {
     setCurrentStep('test')
     setDeviceStatus('Testing')
 
-    const openCommand = buildCartridgeOpenCommand(cartridgeSerial, settings.defaultFixtureId)
+    const openCommand = buildCartridgeOpenCommand(cartridgeSerial, settings.defaultEnclosureBaseId)
     const openResult = await runMeasurementPhase('open', openCommand)
     const firmwareRunUid = openResult.response ? extractRunUid(openResult.response) : undefined
     if (!firmwareRunUid) {
@@ -385,6 +390,39 @@ export function CartridgeSubassemblyPage() {
     await api.saveSettings(nextSettings)
   }
 
+  async function commitSettingSelection(
+    key: keyof StationSettings,
+    listKey: keyof StationSettings,
+    value: string,
+  ) {
+    const trimmed = value.trim()
+    if (!trimmed) return
+
+    const currentList = settings[listKey]
+    const nextList = Array.isArray(currentList) ? Array.from(new Set([...currentList, trimmed])) : [trimmed]
+    const nextSettings = { ...settings, [key]: trimmed, [listKey]: nextList }
+    await saveStationSettings(nextSettings)
+  }
+
+  async function addSettingOption(listKey: keyof StationSettings, value: string) {
+    const trimmed = value.trim()
+    if (!trimmed) return
+
+    const currentList = settings[listKey]
+    const nextList = Array.isArray(currentList) ? Array.from(new Set([...currentList, trimmed])) : [trimmed]
+    await saveStationSettings({ ...settings, [listKey]: nextList })
+  }
+
+  function updateTesterSerial(value: string) {
+    setTesterDeviceSerial(value)
+    void commitSettingSelection('defaultTesterDeviceSerial', 'testerDeviceSerials', value)
+  }
+
+  function updateBatch(value: string) {
+    setBatch(value)
+    void commitSettingSelection('latestBatch', 'batches', value)
+  }
+
   function startProgressTimer(phase: TestPhase) {
     stopProgressTimer()
     const startedAt = Date.now()
@@ -412,68 +450,137 @@ export function CartridgeSubassemblyPage() {
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} alignItems={{ lg: 'center' }}>
-          <Box sx={{ minWidth: 260, flex: 1 }}>
+        <Stack spacing={2}>
+          <Box>
             <Typography variant="h5">SporeScout Cartridge Subassembly Tester</Typography>
             <Typography color="text.secondary" variant="body2">
               Operator-guided cartridge leak characterization.
             </Typography>
           </Box>
 
-          <Autocomplete
-            freeSolo
-            options={settings.operators}
-            value={operator}
-            onChange={(_event, value) => setOperator(value ?? '')}
-            onInputChange={(_event, value) => setOperator(value)}
-            sx={{ width: 190 }}
-            renderInput={(params) => (
-              <TextField {...params} label="Operator" required size="small" error={!operator.trim()} />
-            )}
-          />
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: '1fr',
+                md: 'minmax(180px, 1fr) minmax(180px, 1fr)',
+                xl: 'minmax(220px, 1fr) minmax(220px, 1fr) 150px minmax(260px, 1.25fr) auto auto',
+              },
+              gap: 1.5,
+              alignItems: 'center',
+            }}
+          >
+            <EditableConfigField
+              label="Operator"
+              value={operator}
+              options={settings.operators}
+              required
+              error={!operator.trim()}
+              info="Required for every run. Select your name, or type it and click + to add it to this station."
+              addLabel="Add operator"
+              onValueChange={setOperator}
+              onCommit={(value) => addSettingOption('operators', value)}
+            />
 
-          <Autocomplete
-            freeSolo
-            options={settings.batches}
-            value={batch}
-            onChange={(_event, value) => setBatch(value ?? '')}
-            onInputChange={(_event, value) => setBatch(value)}
-            sx={{ width: 190 }}
-            renderInput={(params) => <TextField {...params} label="Batch" required size="small" />}
-          />
+            <EditableConfigField
+              label="Batch"
+              value={batch}
+              options={settings.batches}
+              required
+              info="Batch is stored with every local payload. Type a new batch and click + to add it; the last selected batch becomes the default."
+              addLabel="Add batch"
+              onValueChange={setBatch}
+              onCommit={updateBatch}
+            />
 
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Mode</InputLabel>
-            <Select label="Mode" value={mode} onChange={(event) => setMode(event.target.value as ConnectionMode)}>
-              <MenuItem value="mock">Mock</MenuItem>
-              <MenuItem value="serial">Serial</MenuItem>
-            </Select>
-          </FormControl>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Mode</InputLabel>
+                <Select label="Mode" value={mode} onChange={(event) => setMode(event.target.value as ConnectionMode)}>
+                  <MenuItem value="mock">Mock</MenuItem>
+                  <MenuItem value="serial">Serial</MenuItem>
+                </Select>
+              </FormControl>
+              <InfoButton title="Use Serial for a real tester over USB. Mock runs the UI workflow without hardware." />
+            </Stack>
 
-          <FormControl size="small" sx={{ minWidth: 180 }} disabled={mode === 'mock'}>
-            <InputLabel>COM port</InputLabel>
-            <Select label="COM port" value={selectedPort} onChange={(event) => setSelectedPort(event.target.value)}>
-              {ports.map((port) => (
-                <MenuItem key={port.path} value={port.path}>
-                  {port.friendlyName ?? port.path}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <FormControl size="small" fullWidth disabled={mode === 'mock'}>
+                <InputLabel>COM port</InputLabel>
+                <Select label="COM port" value={selectedPort} onChange={(event) => setSelectedPort(event.target.value)}>
+                  {ports.map((port) => (
+                    <MenuItem key={port.path} value={port.path}>
+                      {port.friendlyName ?? port.path}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <InfoButton title="Select the USB serial connection for the tester. In browser testing, choose the serial port when the browser prompt opens." />
+            </Stack>
 
-          <Tooltip title="Connect tester and run readiness">
-            <span>
-              <Button variant="contained" startIcon={<UsbIcon />} onClick={connectTester}>
-                Connect
-              </Button>
-            </span>
-          </Tooltip>
+            <Tooltip title="Connect tester and run readiness">
+              <span>
+                <Button variant="contained" startIcon={<UsbIcon />} onClick={connectTester} sx={{ width: '100%' }}>
+                  Connect
+                </Button>
+              </span>
+            </Tooltip>
 
-          <Tooltip title="Engineering">
-            <IconButton onClick={openEngineering} color={engineeringUnlocked ? 'primary' : 'default'}>
-              <ScienceIcon />
-            </IconButton>
-          </Tooltip>
+            <Tooltip title="Engineering">
+              <IconButton onClick={openEngineering} color={engineeringUnlocked ? 'primary' : 'default'}>
+                <ScienceIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(220px, 1fr))', xl: 'repeat(4, minmax(220px, 1fr))' },
+              gap: 1.5,
+            }}
+          >
+            <EditableConfigField
+              label="Tester serial"
+              value={testerDeviceSerial}
+              options={settings.testerDeviceSerials}
+              required
+              info="Serial on the complete tester/electronics assembly. This records which tester produced the run."
+              addLabel="Add tester serial"
+              onValueChange={setTesterDeviceSerial}
+              onCommit={updateTesterSerial}
+            />
+
+            <EditableConfigField
+              label="Enclosure base ID"
+              value={settings.defaultEnclosureBaseId}
+              options={settings.enclosureBaseIds}
+              info="Mechanical mating feature used during the open measurement. Expected format: SS-P-001-XXX-YYYY."
+              addLabel="Add enclosure base ID"
+              onValueChange={(value) => setSettings((current) => ({ ...current, defaultEnclosureBaseId: value }))}
+              onCommit={(value) => commitSettingSelection('defaultEnclosureBaseId', 'enclosureBaseIds', value)}
+            />
+
+            <EditableConfigField
+              label="Nozzle ID"
+              value={settings.defaultNozzleId}
+              options={settings.nozzleIds}
+              info="Nozzle installed at this station. Change only when a nozzle is replaced or another station setup is used."
+              addLabel="Add nozzle ID"
+              onValueChange={(value) => setSettings((current) => ({ ...current, defaultNozzleId: value }))}
+              onCommit={(value) => commitSettingSelection('defaultNozzleId', 'nozzleIds', value)}
+            />
+
+            <EditableConfigField
+              label="Seal ID"
+              value={settings.defaultSealFixtureId}
+              options={settings.sealFixtureIds}
+              info="Seal installed at this station. Change only when a seal is replaced or another station setup is used."
+              addLabel="Add seal ID"
+              onValueChange={(value) => setSettings((current) => ({ ...current, defaultSealFixtureId: value }))}
+              onCommit={(value) => commitSettingSelection('defaultSealFixtureId', 'sealFixtureIds', value)}
+            />
+          </Box>
         </Stack>
       </Paper>
 
@@ -534,7 +641,8 @@ export function CartridgeSubassemblyPage() {
             <DetailRow label="Cartridge" value={cartridgeSerial || 'Not scanned'} />
             <DetailRow label="Operator" value={operator || 'Required'} />
             <DetailRow label="Batch" value={batch || 'Required'} />
-            <DetailRow label="Fixture" value={settings.defaultFixtureId} />
+            <DetailRow label="Tester" value={testerDeviceSerial || 'Required'} />
+            <DetailRow label="Enclosure base" value={settings.defaultEnclosureBaseId} />
             <DetailRow label="Nozzle" value={settings.defaultNozzleId} />
             <DetailRow label="Seal" value={settings.defaultSealFixtureId} />
             <Divider />
@@ -774,14 +882,94 @@ function ReadinessList({ items }: { items: ReadinessItem[] }) {
           </ListItemIcon>
           <ListItemText
             primary={item.label}
-            secondary={item.detail ?? item.command}
+            secondary={readinessStatusText(item)}
             primaryTypographyProps={{ variant: 'body2' }}
             secondaryTypographyProps={{ variant: 'caption' }}
           />
+          <InfoButton title={item.info} />
         </ListItem>
       ))}
     </List>
   )
+}
+
+function EditableConfigField(props: {
+  label: string
+  value: string
+  options: string[]
+  info: string
+  addLabel: string
+  onValueChange: (value: string) => void
+  onCommit: (value: string) => void | Promise<void>
+  required?: boolean
+  error?: boolean
+}) {
+  const trimmedValue = props.value.trim()
+
+  const commit = () => {
+    if (trimmedValue) {
+      void props.onCommit(trimmedValue)
+    }
+  }
+
+  return (
+    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+      <Autocomplete
+        freeSolo
+        options={props.options}
+        value={props.value}
+        inputValue={props.value}
+        onChange={(_event, value) => {
+          const nextValue = value ?? ''
+          props.onValueChange(nextValue)
+          if (nextValue.trim()) {
+            void props.onCommit(nextValue)
+          }
+        }}
+        onInputChange={(_event, value) => props.onValueChange(value)}
+        sx={{ flex: 1, minWidth: 0 }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label={props.label}
+            required={props.required}
+            size="small"
+            error={props.error}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                commit()
+              }
+            }}
+          />
+        )}
+      />
+      <InfoButton title={props.info} />
+      <Tooltip title={trimmedValue ? props.addLabel : `Type a ${props.label.toLowerCase()} first`}>
+        <span>
+          <IconButton size="small" onClick={commit} disabled={!trimmedValue} aria-label={props.addLabel}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Stack>
+  )
+}
+
+function InfoButton({ title }: { title: string }) {
+  return (
+    <Tooltip title={title} enterDelay={250}>
+      <IconButton size="small" aria-label="Help" sx={{ color: 'text.secondary', flexShrink: 0 }}>
+        <InfoOutlinedIcon fontSize="small" />
+      </IconButton>
+    </Tooltip>
+  )
+}
+
+function readinessStatusText(item: ReadinessItem): string {
+  if (item.status === 'running') return 'Checking now'
+  if (item.status === 'passed') return item.detail ?? 'Ready'
+  if (item.status === 'failed') return item.detail ?? 'Needs attention'
+  return 'Waiting'
 }
 
 function EngineeringPasswordDialog(props: {
@@ -891,7 +1079,7 @@ function EngineeringDrawer(props: {
                 <MenuItem value="Repeat measurement">Repeat measurement</MenuItem>
                 <MenuItem value="Accept single pass">Accept single pass</MenuItem>
                 <MenuItem value="Cancel run">Cancel run</MenuItem>
-                <MenuItem value="Record fixture issue">Record fixture issue</MenuItem>
+                <MenuItem value="Record station hardware issue">Record station hardware issue</MenuItem>
               </Select>
             </FormControl>
             <TextField
@@ -946,10 +1134,16 @@ function StationSettingsPanel(props: {
   return (
     <Stack spacing={1.5}>
       <EditableDefault
-        label="Fixture"
-        value={props.settings.defaultFixtureId}
-        options={props.settings.fixtureIds}
-        onChange={(value) => updateDefault('defaultFixtureId', 'fixtureIds', value)}
+        label="Tester serial"
+        value={props.settings.defaultTesterDeviceSerial}
+        options={props.settings.testerDeviceSerials}
+        onChange={(value) => updateDefault('defaultTesterDeviceSerial', 'testerDeviceSerials', value)}
+      />
+      <EditableDefault
+        label="Enclosure base ID"
+        value={props.settings.defaultEnclosureBaseId}
+        options={props.settings.enclosureBaseIds}
+        onChange={(value) => updateDefault('defaultEnclosureBaseId', 'enclosureBaseIds', value)}
       />
       <EditableDefault
         label="Nozzle"
@@ -958,7 +1152,7 @@ function StationSettingsPanel(props: {
         onChange={(value) => updateDefault('defaultNozzleId', 'nozzleIds', value)}
       />
       <EditableDefault
-        label="Seal fixture"
+        label="Seal ID"
         value={props.settings.defaultSealFixtureId}
         options={props.settings.sealFixtureIds}
         onChange={(value) => updateDefault('defaultSealFixtureId', 'sealFixtureIds', value)}
@@ -1082,13 +1276,6 @@ function DetailRow({
 
 function measurementValue(measurement?: MeasurementSummary): string {
   return measurement ? `${measurement.slpm.toFixed(3)} slpm` : '-'
-}
-
-function formatReadinessDetail(value: unknown): string {
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return String(value)
-  }
-  return JSON.stringify(value)
 }
 
 function delay(ms: number): Promise<void> {

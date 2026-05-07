@@ -10,32 +10,37 @@ import {
 export const READINESS_ITEMS: ReadinessItem[] = [
   {
     id: 'firmware',
-    label: 'Firmware version',
+    label: 'Checking firmware version',
     command: 'system GetFirmwareVersion',
+    info: 'Confirms the tester is running the expected firmware. Command: system GetFirmwareVersion.',
     status: 'pending',
   },
   {
     id: 'self-test',
-    label: 'Tester self test',
+    label: 'Running tester self check',
     command: 'test self_check',
+    info: 'Runs the built-in tester self check before cartridge testing starts. Command: test self_check.',
     status: 'pending',
   },
   {
     id: 'power',
-    label: '24V and load switch ready',
+    label: 'Checking tester power',
     command: 'load_switch_24v_aux_in IsConnected',
+    info: 'Checks that the internal power path needed for the test is available. Command: load_switch_24v_aux_in IsConnected.',
     status: 'pending',
   },
   {
     id: 'solenoid',
-    label: 'Solenoid locked',
+    label: 'Checking solenoid lock state',
     command: 'solenoid IsLocked',
+    info: 'Confirms the cartridge lock is in the locked state before the next step. Command: solenoid IsLocked.',
     status: 'pending',
   },
   {
     id: 'idle',
-    label: 'Device idle state',
+    label: 'Checking tester idle state',
     command: 'system GetIdleState',
+    info: 'Confirms the tester is idle before starting the cartridge workflow. Command: system GetIdleState.',
     status: 'pending',
   },
 ]
@@ -79,17 +84,17 @@ export function markReadinessItem(
 
 export function buildCartridgeOpenCommand(
   cartridgeSerial: string,
-  fixtureId: string,
+  enclosureBaseId: string,
 ): string {
-  return `test cartridge_leak open ${cartridgeSerial} ${fixtureId} ${CARTRIDGE_PROFILE}`
+  return `test cartridge_leak open ${cartridgeSerial} ${enclosureBaseId} ${CARTRIDGE_PROFILE}`
 }
 
 export function buildCartridgePhaseCommand(
   phase: Exclude<TestPhase, 'open'>,
   runUid: string,
-  fixtureId: string,
+  hardwareId: string,
 ): string {
-  return `test cartridge_leak ${phase} ${runUid} ${fixtureId}`
+  return `test cartridge_leak ${phase} ${runUid} ${hardwareId}`
 }
 
 export function extractRunUid(response: GuiResponseEnvelope): string | undefined {
