@@ -12,6 +12,7 @@ dist
 dist-ssr
 out
 release
+output
 .playwright-mcp
 *.local
 
