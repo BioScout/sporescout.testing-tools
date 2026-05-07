@@ -75,7 +75,7 @@ import {
   progressLabel,
   type WorkflowStepId,
 } from '../../shared/workflow'
-import { getTestingToolsApi } from '../../services/testingToolsApi'
+import { getDefaultConnectionMode, getTestingToolsApi } from '../../services/testingToolsApi'
 
 type GuidanceState = {
   guidance?: string
@@ -94,7 +94,7 @@ const api = getTestingToolsApi()
 export function CartridgeSubassemblyPage() {
   const [settings, setSettings] = useState<StationSettings>(DEFAULT_STATION_SETTINGS)
   const [ports, setPorts] = useState<SerialPortInfo[]>([])
-  const [mode, setMode] = useState<ConnectionMode>(window.testingTools ? 'serial' : 'mock')
+  const [mode, setMode] = useState<ConnectionMode>(getDefaultConnectionMode())
   const [selectedPort, setSelectedPort] = useState('')
   const [connected, setConnected] = useState(false)
   const [deviceStatus, setDeviceStatus] = useState('Disconnected')
