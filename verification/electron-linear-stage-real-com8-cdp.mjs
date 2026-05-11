@@ -303,7 +303,7 @@ async function setStageClear(client) {
   const checked = await client.evaluate(`(() => {
     const checkbox = Array.from(document.querySelectorAll('input[type="checkbox"]')).find((item) => {
       const label = item.closest('label');
-      return label?.innerText.includes('Stage area is clear');
+      return label?.innerText.includes('Stage area is clear and ready for motion');
     });
     if (!checkbox) return false;
     checkbox.scrollIntoView({ block: 'center', inline: 'center' });
@@ -388,8 +388,23 @@ try {
   await sleep(1000)
   await selectLinearStageMode(client, selectedMode)
 
-  await clickButton(client, 'Connect')
-  await waitFor(client, 'readiness completed', `document.body.innerText.includes('Stage area is clear') || document.body.innerText.includes('Ready to start') || document.body.innerText.includes('Ready to run linear-stage test.')`, 180000, 2000)
+  await clickButton(client, 'Connect tester')
+  await waitFor(client, 'serial connected', `document.body.innerText.includes('Connected')`, 60000, 1000)
+  await waitFor(client, 're-run readiness enabled', `(() => {
+    const button = Array.from(document.querySelectorAll('button')).find((item) => item.innerText.trim() === 'Re-run readiness');
+    return Boolean(button && !button.disabled);
+  })()`, 60000, 1000)
+  await clickButton(client, 'Re-run readiness')
+  try {
+    await waitFor(client, 'readiness completed', `(() => {
+      const text = document.body.innerText;
+      const confirmButton = Array.from(document.querySelectorAll('button')).find((item) => item.innerText.trim() === 'Confirm readiness');
+      return text.includes('Clear stage area') && Boolean(confirmButton);
+    })()`, 180000, 2000)
+  } catch (error) {
+    await captureState(client, 'readiness-timeout')
+    throw error
+  }
   await captureState(client, 'after-connect')
 
   await setStageClear(client)
@@ -439,18 +454,33 @@ try {
   await saveScreenshot(client, screenshotPath.replace(/(\.[^.]+)?$/, `-${selectedMode.label.toLowerCase()}$1`))
   await waitFor(client, 'test finished', `(() => {
     const text = document.body.innerText;
-    return text.includes('Review result') && (text.includes('FAIL') || text.includes('PASS') || text.includes('REVIEW'));
+    const buttons = Array.from(document.querySelectorAll('button')).map((button) => button.innerText.trim());
+    const resultStatus = document.querySelector('[data-linear-stage-result-summary]')?.getAttribute('data-linear-stage-result-status');
+    const liveActive = document.querySelector('[data-linear-stage-live-active]')?.getAttribute('data-linear-stage-live-active');
+    return document.querySelector('[data-linear-stage-workflow-step="review"]') &&
+      buttons.includes('Next run') &&
+      buttons.includes('Repeat test') &&
+      buttons.includes('Exit') &&
+      ['pass', 'fail', 'warn'].includes(resultStatus ?? '') &&
+      liveActive === 'false' &&
+      text.includes(${jsString(`${selectedMode.label} live trace`)}) &&
+      text.includes(${jsString(selectedMode.command)}) &&
+      !text.includes(${jsString(`${selectedMode.heading} in progress`)}) &&
+      !text.includes('Test is running. Keep the stage clear');
   })()`, 1800000, 5000)
   const finalState = await captureState(client, 'final')
   const resultSummary = await client.evaluate(`(() => {
     const text = document.body.innerText;
     const records = Array.from(document.querySelectorAll('table tbody tr')).slice(0, 25).map((row) => row.innerText.replace(/\\s+/g, ' | '));
+    const finalStatus = document.querySelector('[data-linear-stage-result-summary]')?.getAttribute('data-linear-stage-result-status') ?? null;
+    const liveActive = document.querySelector('[data-linear-stage-live-active]')?.getAttribute('data-linear-stage-live-active') ?? null;
     return {
-      hasFail: text.includes('FAIL'),
+      finalStatus,
+      liveActive,
       hasPayloadOmittedWarning: text.includes('result payload was not captured') || text.includes('payload was omitted'),
       hasHistogram: text.includes('Measurement histograms') || text.includes('Metric histogram') || text.includes('histogram'),
       hasHistoricalRecords: text.includes('Historical records') || text.includes('Full local retention'),
-      hasLiveTrace: text.includes('Linear-stage live trace') && text.includes('Latest completed phase'),
+      hasLiveTrace: liveActive === 'false' && text.includes(${jsString(`${selectedMode.label} live trace`)}) && text.includes('Latest completed phase'),
       hasCommand: text.includes(${jsString(selectedMode.command)}),
       phaseNames: Array.from(document.querySelectorAll('[data-linear-stage-phase]')).map((node) => node.getAttribute('data-linear-stage-phase')),
       records,
@@ -462,6 +492,7 @@ try {
   if (!resultSummary.hasHistoricalRecords) throw new Error('Historical records panel was not visible.')
   if (!resultSummary.hasLiveTrace) throw new Error('Expected final review to preserve the live phase trace.')
   if (!resultSummary.hasCommand) throw new Error('Final review did not preserve the exact executed command.')
+  if (!['pass', 'fail', 'warn'].includes(resultSummary.finalStatus)) throw new Error(`Final review did not expose a terminal status. Status: ${resultSummary.finalStatus}`)
   if (JSON.stringify(resultSummary.phaseNames) !== JSON.stringify(selectedMode.phases)) {
     throw new Error(`${selectedMode.label} final phase list mismatch.\nExpected: ${selectedMode.phases.join(' | ')}\nActual:   ${(resultSummary.phaseNames ?? []).join(' | ')}`)
   }

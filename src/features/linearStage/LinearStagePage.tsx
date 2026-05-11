@@ -1069,7 +1069,7 @@ export function LinearStagePage() {
           </List>
         </Paper>
 
-        <Paper variant="outlined" sx={{ minHeight: 500, minWidth: 0, p: 3 }}>
+        <Paper variant="outlined" data-linear-stage-workflow-step={currentStep} sx={{ minHeight: 500, minWidth: 0, p: 3 }}>
           {renderMainStep()}
         </Paper>
 
@@ -1498,7 +1498,7 @@ function LinearResultSummary({ summary }: { summary: LinearStageSummary | null }
   const warned = summary?.steps.filter((step) => step.result === 'Warn').length ?? 0
 
   return (
-    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
+    <Box data-linear-stage-result-summary data-linear-stage-result-status={status} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
       <Stack spacing={1.25}>
         <Stack spacing={1.5}>
           <Stack direction="row" spacing={1} alignItems="center">
@@ -1572,7 +1572,7 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
     : 'All planned phases reported.'
 
   return (
-    <Box sx={{ border: '1px solid', borderColor: liveStatusBorderColor(status), borderRadius: 1, overflow: 'hidden' }}>
+    <Box data-linear-stage-live-active={liveRun.active ? 'true' : 'false'} data-linear-stage-live-status={status} sx={{ border: '1px solid', borderColor: liveStatusBorderColor(status), borderRadius: 1, overflow: 'hidden' }}>
       <Box sx={{ p: 1.5, bgcolor: liveRun.active ? 'rgba(19, 151, 241, 0.08)' : 'grey.50', borderBottom: '1px solid', borderColor: 'divider' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
           <Stack spacing={0.5} sx={{ minWidth: 0 }}>

@@ -110,7 +110,7 @@
   - `.\scripts\launch-windows.ps1 -DryRun` and `.\Launch-SporeScout-Testing-Tools.cmd -DryRun` resolved the local portable EXE.
   - Simulated clean-clone dry-run with no local portable candidate reported exact-tag GitHub release first, then a checked-out-commit Actions artifact fallback (`6575fd51f7eb` in this worktree). This dry-run did not prove remote artifact availability.
   - Fixed the launcher branch metadata path for untagged branches: `git describe --exact-match` failures are non-fatal, and the script avoids PowerShell null-conditional syntax for Windows compatibility.
-- 2026-05-12: Follow-up no-device review found pre-device validation blockers. Fixes are in progress:
+- 2026-05-12: Follow-up no-device review found pre-device validation blockers. Fixes were addressed before device validation:
   - Regenerate and commit `package-lock.json` so GitHub Actions `npm ci` can package a portable artifact.
   - Launcher now has a `-VerifyDownloadAvailability` mode and exact-commit workflow-run lookup template instead of relying on a shallow latest-runs page.
   - Renderer and Electron IPC are being hardened so connection mode, COM port, reconnect, and run metadata cannot change during an active or review-stage linear-stage run.
@@ -118,8 +118,18 @@
   - Browser preview Web Serial is fully disabled; it remains mock-only.
   - Real COM8 validation script now requires `getRuntimeConfig()` to report Electron exact-port `COM8` before any serial port listing.
   - Final response artifacts are merged into the live trace instead of being dropped when previous live artifacts exist as an empty array.
-- GitHub Actions release artifact availability and real-device validation remain pending after these fixes are validated and pushed.
+- GitHub Actions release artifact availability for commit `49aa1c461c3b47efccfe0c0b0484ae5cf6456fcc` has been verified. Newer local commits still need their own workflow artifact verification after they are pushed.
 - 2026-05-12: Firmware preflight/OTA/runtime activation was completed on approved device SS-A-001-101A-0013 only before GUI motion validation. The correct Particle product id is `33608` (not platform id `35`), preflight showed OTA enabled, the branch binary was flashed, and `system GetFirmwareVersion` returned `9003001`.
 - 2026-05-12: GitHub Actions Release workflow run `25683466062` for commit `49aa1c461c3b47efccfe0c0b0484ae5cf6456fcc` completed successfully. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`; HEAD is intentionally not an exact tag, so the exact-tag release check was skipped.
 - CM4 dev-session deployment is currently blocked by local RMS/VPN routing: approved CM4 reports hostname `SS-A-001-101A-0013`, IP `192.168.1.179`, SSH service active, and `golden-eye.service` active through M-SoM/COM8, but the Windows host has no active OpenVPN/RMS route and `Test-NetConnection 192.168.1.179:22` routes via local WiFi and fails.
-- Split-mode firmware command validation and real COM8 GUI validation remain pending.
+- 2026-05-12: Real COM8 GUI mechanics-mode validation on approved target SS-A-001-101A-0013 reached the live run screen and verified the exact mechanics command plus the 17-step mechanics phase list, but the CDP validation script falsely treated the left-nav "Review result" label as final completion while the test was still running. The script now waits for review-step data attributes, final review controls, terminal status, inactive live trace, and preserved command text before closing the app. Before any further motion, re-check the approved device is idle/ready because the previous app process was closed early.
+- 2026-05-12: Post-fix local validation passed:
+  - `npm run typecheck`
+  - `npm test` passed 37/37 tests.
+  - `node --check verification\electron-linear-stage-real-com8-cdp.mjs`
+  - `node --check verification\serial-linear-stage-prepare-only-com8.mjs`
+  - `npm run package:dir` rebuilt `release\win-unpacked\SporeScout Testing Tools.exe`.
+  - Packaged all-mode mock smoke passed after the rebuild with exact phase-list assertions for Full, Mechanics, and Optics.
+- 2026-05-12: Added a COM8-pinned prepare-only verifier that refuses any port other than COM8 and sends only non-motion `system GetFirmwareVersion`, `test linear_stage status`, and `test linear_stage prepare/status` commands before allowing any GUI motion rerun.
+- 2026-05-12: Exact-target post-abort readiness remains blocked: Particle product-scoped `system GetFirmwareVersion` and `test linear_stage prepare` calls to device id `0a10aced202194944a051970` returned only the weak function return `0` with no `CommandResponse`, and local COM8 opened but timed out waiting for `system GetFirmwareVersion`. Treat the approved device command path as busy or wedged; do not start another motion run until a non-motion command produces an authoritative response.
+- Split-mode firmware command validation and a completed local COM8 GUI validation remain pending.
