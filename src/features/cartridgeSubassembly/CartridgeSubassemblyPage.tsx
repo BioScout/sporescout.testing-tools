@@ -121,6 +121,8 @@ const HISTORY_PAGE_LIMIT = 500
 export function CartridgeSubassemblyPage() {
   const [settings, setSettings] = useState<StationSettings>(DEFAULT_STATION_SETTINGS)
   const [ports, setPorts] = useState<SerialPortInfo[]>([])
+  const [portsLoading, setPortsLoading] = useState(false)
+  const [portsError, setPortsError] = useState('')
   const [mode, setMode] = useState<ConnectionMode>(getDefaultConnectionMode())
   const [selectedPort, setSelectedPort] = useState('')
   const [connected, setConnected] = useState(false)
@@ -198,14 +200,7 @@ export function CartridgeSubassemblyPage() {
       setTesterDeviceSerial(loadedSettings.defaultTesterDeviceSerial)
     })
 
-    api.listSerialPorts().then((availablePorts) => {
-      if (!mounted) return
-      setPorts(availablePorts)
-      setSelectedPort(availablePorts[0]?.path ?? '')
-    }).catch(() => {
-      if (!mounted) return
-      setPorts([])
-    })
+    void refreshSerialPorts({ preserveSelection: false, mounted: () => mounted })
 
     api.checkForUpdates().then((result) => {
       if (!mounted) return
@@ -358,14 +353,57 @@ export function CartridgeSubassemblyPage() {
     return operationToken.current === token
   }
 
+  async function refreshSerialPorts(options: { preserveSelection?: boolean; mounted?: () => boolean } = {}) {
+    setPortsLoading(true)
+    setPortsError('')
+    try {
+      const availablePorts = await api.listSerialPorts()
+      if (options.mounted && !options.mounted()) return availablePorts
+      setPorts(availablePorts)
+      setSelectedPort((current) => {
+        if (options.preserveSelection !== false && current.trim()) return current
+        return availablePorts[0]?.path ?? current
+      })
+      if (availablePorts.length === 0) {
+        setPortsError('No COM ports were reported. Type the COM name from Device Manager, for example COM8.')
+      }
+      return availablePorts
+    } catch (error) {
+      if (!options.mounted || options.mounted()) {
+        setPorts([])
+        setPortsError(error instanceof Error ? error.message : 'Could not list COM ports.')
+      }
+      return []
+    } finally {
+      if (!options.mounted || options.mounted()) {
+        setPortsLoading(false)
+      }
+    }
+  }
+
   async function connectTester() {
     const token = beginOperation()
     setFaultText('')
     setSolenoidLocked(false)
     setDeviceStatus('Connecting')
     setCurrentStep('connect')
+    let portPath = selectedPort.trim()
+    if (mode === 'serial' && !portPath) {
+      const availablePorts = await refreshSerialPorts({ preserveSelection: false })
+      if (!isCurrentOperation(token)) return
+      portPath = availablePorts[0]?.path?.trim() ?? ''
+      if (portPath) {
+        setSelectedPort(portPath)
+      }
+    }
+    if (mode === 'serial' && !portPath) {
+      setDeviceStatus('Fault')
+      setFaultText('Select or type the COM port shown in Device Manager, then connect again.')
+      setLatestAction('No COM port is selected.')
+      return
+    }
     connectionAttemptInFlight.current = true
-    const result = await api.connect({ mode, path: mode === 'serial' ? selectedPort : undefined })
+    const result = await api.connect({ mode, path: mode === 'serial' ? portPath : undefined })
     connectionAttemptInFlight.current = false
     if (!isCurrentOperation(token)) return
 
@@ -1065,18 +1103,42 @@ export function CartridgeSubassemblyPage() {
               </FormControl>
             </Tooltip>
 
-            <Tooltip title="Select the USB serial connection for the tester. In browser testing, choose the serial port when the browser prompt opens.">
-              <FormControl size="small" fullWidth disabled={mode === 'mock'}>
-                <InputLabel>COM port</InputLabel>
-                <Select label="COM port" value={selectedPort} onChange={(event) => setSelectedPort(event.target.value)}>
-                  {ports.map((port) => (
-                    <MenuItem key={port.path} value={port.path}>
-                      {port.friendlyName ?? port.path}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Tooltip>
+            <Stack direction="row" spacing={1} alignItems="flex-start">
+              <Tooltip title="Select the USB serial connection for the tester, or type the COM port shown in Device Manager.">
+                <TextField
+                  size="small"
+                  fullWidth
+                  disabled={mode === 'mock'}
+                  label="COM port"
+                  value={selectedPort}
+                  placeholder="COM8"
+                  helperText={portsError || (ports.length ? `Detected: ${ports.map((port) => port.friendlyName ?? port.path).join(', ')}` : 'Type COM port if the list is blank.')}
+                  error={Boolean(portsError) && mode === 'serial'}
+                  onChange={(event) => setSelectedPort(event.target.value.toUpperCase())}
+                  inputProps={{
+                    list: 'cartridge-com-port-options',
+                  }}
+                />
+              </Tooltip>
+              <datalist id="cartridge-com-port-options">
+                {ports.map((port) => (
+                  <option key={port.path} value={port.path}>
+                    {port.friendlyName ?? port.path}
+                  </option>
+                ))}
+              </datalist>
+              <Tooltip title="Refresh COM ports">
+                <span>
+                  <IconButton
+                    aria-label="Refresh COM ports"
+                    disabled={mode === 'mock' || portsLoading}
+                    onClick={() => void refreshSerialPorts({ preserveSelection: true })}
+                  >
+                    <RefreshIcon />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Stack>
 
             <Tooltip title="Connect tester and run readiness">
               <span>
