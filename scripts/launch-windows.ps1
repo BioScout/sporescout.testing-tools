@@ -352,7 +352,7 @@ function Download-PortableArtifact {
   New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
   try {
     $downloadHeaders = Copy-Hashtable -InputTable $headers
-    $downloadHeaders['Accept'] = 'application/zip'
+    $downloadHeaders['Accept'] = 'application/vnd.github+json'
     Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $downloadHeaders -OutFile $zipPath
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
     $portable = Copy-FirstPortableFromArchive -ExtractedDirectory $extractPath -DestinationDirectory $destinationDirectory -DownloadConfig $DownloadConfig
