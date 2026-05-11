@@ -72,6 +72,7 @@ import {
   type UpdateCheckResult,
 } from '../../shared/contracts'
 import { explainCartridgeSerial, isValidCartridgeSerial, normalizeCartridgeSerial } from '../../shared/cartridgeSerial'
+import { appVersionStatusColor, appVersionStatusLabel } from '../../shared/appVersion'
 import { parseSerialLine } from '../../shared/serialParser'
 import {
   FLOW_STEPS,
@@ -165,6 +166,7 @@ export function CartridgeSubassemblyPage() {
     status: 'idle',
     message: 'Update check has not run.',
   })
+  const [appVersion, setAppVersion] = useState('')
   const progressTimer = useRef<number | undefined>()
   const unlockTimer = useRef<number | undefined>()
   const operationToken = useRef(0)
@@ -198,6 +200,11 @@ export function CartridgeSubassemblyPage() {
       setSettings(loadedSettings)
       setBatch(loadedSettings.latestBatch)
       setTesterDeviceSerial(loadedSettings.defaultTesterDeviceSerial)
+    })
+
+    api.getRuntimeConfig().then((config) => {
+      if (!mounted) return
+      setAppVersion(config.appVersion ?? '')
     })
 
     void refreshSerialPorts({ preserveSelection: false, mounted: () => mounted })
@@ -1212,6 +1219,7 @@ export function CartridgeSubassemblyPage() {
 
       <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 34, flexWrap: 'wrap' }}>
         <StatusChip label={deviceStatus} connected={connected} />
+        <Chip size="small" label={appVersionStatusLabel(appVersion, updateResult)} color={appVersionStatusColor(updateResult)} />
         <Chip size="small" label={`Update: ${updateResult.status}`} color={updateResult.status === 'failed' ? 'warning' : 'default'} />
         {runUid && <Chip size="small" label={`run_uid ${runUid}`} />}
         {faultText && <Alert severity="error" sx={{ py: 0, flex: '1 1 360px' }}>{faultText}</Alert>}

@@ -118,6 +118,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('runtime:getConfig', async () => ({
     serialBackend: 'electron' as const,
     exactSerialPort: process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim() || undefined,
+    appVersion: app.getVersion(),
   }))
 
   ipcMain.handle('serial:listPorts', async () => {

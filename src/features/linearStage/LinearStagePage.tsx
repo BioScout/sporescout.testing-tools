@@ -68,6 +68,7 @@ import {
   type StorageSummary,
   type UpdateCheckResult,
 } from '../../shared/contracts'
+import { appVersionStatusColor, appVersionStatusLabel } from '../../shared/appVersion'
 import { parseSerialLine } from '../../shared/serialParser'
 import { getDefaultConnectionMode, getTestingToolsApi } from '../../services/testingToolsApi'
 import {
@@ -340,6 +341,7 @@ export function LinearStagePage() {
     status: 'idle',
     message: 'Update check has not run.',
   })
+  const [appVersion, setAppVersion] = useState('')
   const [runSummary, setRunSummary] = useState<LinearStageSummary | null>(null)
   const [runProgress, setRunProgress] = useState<RunProgress | null>(null)
   const [linearStageMode, setLinearStageMode] = useState<LinearStageMode>(DEFAULT_LINEAR_STAGE_MODE)
@@ -381,6 +383,11 @@ export function LinearStagePage() {
       setSettings(loadedSettings)
       setBatch(loadedSettings.latestBatch)
       setTesterDeviceSerial(loadedSettings.defaultTesterDeviceSerial)
+    })
+
+    api.getRuntimeConfig().then((config) => {
+      if (!mounted) return
+      setAppVersion(config.appVersion ?? '')
     })
 
     api.listSerialPorts().then((availablePorts) => {
@@ -1041,6 +1048,7 @@ export function LinearStagePage() {
 
       <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 34, flexWrap: 'wrap' }}>
         <StatusChip label={deviceStatus} connected={connected} status={runSummary?.status} />
+        <Chip size="small" label={appVersionStatusLabel(appVersion, updateResult)} color={appVersionStatusColor(updateResult)} />
         <Chip size="small" label={`Update: ${updateResult.status}`} color={updateResult.status === 'failed' ? 'warning' : 'default'} />
         {activeRunId && <Chip size="small" label={activeRunId} onClick={() => updateHistoryRunFilter(activeRunId)} />}
         {faultText && <Alert severity="error" sx={{ py: 0, flex: 1 }}>{faultText}</Alert>}
