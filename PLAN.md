@@ -13,9 +13,9 @@
 - Real writable worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.testing-tools
 - Paired firmware worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.msom
 - Reference docs: C:\GitHub\sporescout.agents
-- Current-thread approved real device: SS-A-001-101A-0013 only.
-- Approved device details: Particle id 0a10aced202194944a051970, local serial COM8 when plugged in, SSH alias SS-A-001-101A-0013.
-- Exact-port validation path: set SPORESCOUT_TESTING_TOOLS_EXACT_PORT=COM8 for real local GUI validation.
+- Current-thread approved real device: SS-A-001-101A-0112 only.
+- Approved device details: Particle id 0a10aced202194944a087ec4, Particle product id 33608, SSH alias SS-A-001-101A-0112. No local serial port is currently connected or approved for this device in this thread.
+- Exact-port validation path: only use a local serial port if the user explicitly provides and approves the exact port for SS-A-001-101A-0112 in this thread.
 - Forbidden device behavior: do not probe, list-test, flash, reboot, command, SSH, serial-connect, or inspect any other real device.
 
 ## Approved Scope
@@ -169,3 +169,11 @@
   - `npm test -- --run src/features/linearStage/linearStageWorkflow.test.ts`
   - `npm run typecheck`
 - Next exact-target prepare checks after OTA must call the verifier with expected firmware `9003002`.
+- 2026-05-12: User paused the SS-A-001-101A-0013 validation path and reauthorized SS-A-001-101A-0112 as the only real-device target. New request is to make the cartridge tester GUI clone-ready on a fresh Windows machine, flash SS-A-001-101A-0112 with the latest M-SoM firmware, and avoid CM4/manual development sessions. Before real-device interaction, use only Particle/SSH commands scoped to SS-A-001-101A-0112 and do not touch SS-A-001-101A-0013.
+- 2026-05-12: Cartridge GUI changes are present locally but not yet committed on this branch; fresh-clone readiness requires validating, committing, pushing, and verifying a Release workflow artifact for the resulting commit.
+- 2026-05-12: Cartridge GUI clone-readiness validation passed locally before push:
+  - `npm run typecheck`
+  - `npm test` passed 38/38 tests.
+  - `npm run dist:portable` produced `release\SporeScout Testing Tools-0.1.0-x64-portable.exe`.
+  - `.\scripts\launch-windows.ps1 -DryRun` resolved the packaged portable EXE.
+  - Render-only packaged Electron smoke passed via `verification\electron-cartridge-mock-cdp.mjs` with `SPORESCOUT_TESTING_TOOLS_EXACT_PORT=NO_REAL_PORT_FOR_RENDER_SMOKE`; this smoke intentionally does not click Connect or open serial.

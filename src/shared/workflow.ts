@@ -13,7 +13,7 @@ export const READINESS_ITEMS: ReadinessItem[] = [
     id: 'firmware',
     label: 'Checking firmware version',
     command: CARTRIDGE_READINESS_COMMAND,
-    info: 'Confirms the tester reports firmware and hardware versions. Command: test cartridge_leak readiness.',
+    info: 'Prepares the tester, then confirms firmware and hardware versions. Command: test cartridge_leak prepare.',
     status: 'pending',
   },
   {
@@ -32,9 +32,9 @@ export const READINESS_ITEMS: ReadinessItem[] = [
   },
   {
     id: 'station_self_check',
-    label: 'Checking station self test',
+    label: 'Checking station self test status',
     command: CARTRIDGE_READINESS_COMMAND,
-    info: 'Checks station prerequisites used by the cartridge tester, including fan and flow-sensor dependencies.',
+    info: 'Confirms station power, flow-sensor presence, and fan command path before open starts.',
     status: 'pending',
   },
   {
@@ -45,17 +45,24 @@ export const READINESS_ITEMS: ReadinessItem[] = [
     status: 'pending',
   },
   {
-    id: 'cm4_ready',
-    label: 'Checking CM4 readiness',
+    id: 'cm4_power',
+    label: 'Checking tester computer power',
     command: CARTRIDGE_READINESS_COMMAND,
-    info: 'Confirms 5V Aux and CM4 availability before any solenoid state is trusted.',
+    info: 'Checks the internal tester computer power before trusting lock state.',
+    status: 'pending',
+  },
+  {
+    id: 'cm4_ready',
+    label: 'Checking tester computer readiness',
+    command: CARTRIDGE_READINESS_COMMAND,
+    info: 'Confirms the internal tester computer is ready before any solenoid state is trusted.',
     status: 'pending',
   },
   {
     id: 'solenoid_locked',
     label: 'Checking solenoid lock state',
-    command: CARTRIDGE_READINESS_COMMAND,
-    info: 'Checks the cartridge lock only after the CM4 readiness check passes.',
+    command: 'solenoid IsUnlocked',
+    info: 'Runs after tester readiness. The solenoid is safe only when this returns locked.',
     status: 'pending',
   },
 ]
@@ -101,6 +108,14 @@ export function markAllReadinessItems(items: ReadinessItem[], status: ReadinessI
   return items.map((item) => ({ ...item, status, detail: undefined }))
 }
 
+export function markReadinessCommandItemsRunning(items: ReadinessItem[]): ReadinessItem[] {
+  return items.map((item) => ({
+    ...item,
+    status: item.command === CARTRIDGE_READINESS_COMMAND ? 'running' : 'pending',
+    detail: undefined,
+  }))
+}
+
 export function applyCartridgeReadinessResult(
   items: ReadinessItem[],
   result: unknown,
@@ -108,7 +123,7 @@ export function applyCartridgeReadinessResult(
   const response = asRecord(result)
   const checks = asRecord(response.checks)
   const operatorAction = asString(response.operator_action)
-  const ready = response.ready === true || response.status === 'READY'
+  const ready = response.ready === true || response.ready === 1 || response.status === 'READY'
 
   return {
     ready,
@@ -123,7 +138,25 @@ export function applyCartridgeReadinessResult(
         return { ...item, status: 'passed', detail }
       }
 
-      const check = asRecord(checks[item.id])
+      const rawCheck = checks[item.id] ?? response[`check_${item.id}`]
+      if (typeof rawCheck === 'number') {
+        const skippedDetail =
+          item.id === 'station_self_check'
+            ? asString(response.station_self_check_message) ?? 'Station self-check waits for tester power.'
+            : item.id === 'solenoid_locked'
+              ? 'Checked next after tester computer readiness.'
+              : 'Skipped by firmware'
+        return {
+          ...item,
+          status: rawCheck === 1 ? 'passed' : rawCheck === -1 ? 'pending' : 'failed',
+          detail: rawCheck === 1 ? 'Ready' : rawCheck === -1 ? skippedDetail : 'Needs attention',
+        }
+      }
+      if (typeof rawCheck === 'boolean') {
+        return { ...item, status: rawCheck ? 'passed' : 'failed', detail: rawCheck ? 'Ready' : 'Needs attention' }
+      }
+
+      const check = asRecord(rawCheck)
       if (Object.keys(check).length === 0) {
         return { ...item, status: 'failed', detail: 'Missing readiness result' }
       }
@@ -138,6 +171,18 @@ export function applyCartridgeReadinessResult(
       }
     }),
   }
+}
+
+export function isReadinessAutoRetryable(result: unknown): boolean {
+  const response = asRecord(result)
+  const checks = asRecord(response.checks)
+  const testerPower = readinessCheckPassed(checks.tester_power ?? response.check_tester_power)
+  const cm4Power = readinessCheckPassed(checks.cm4_power ?? response.check_cm4_power)
+  const cm4Ready = readinessCheckPassed(checks.cm4_ready ?? response.check_cm4_ready)
+  const stationBootReady = readinessCheckPassed(checks.station_boot_ready ?? response.check_station_boot_ready)
+  const ready = response.ready === true || response.ready === 1 || response.status === 'READY'
+
+  return !ready && testerPower === true && cm4Power === true && cm4Ready === false && stationBootReady !== false
 }
 
 export function buildCartridgeOpenCommand(
@@ -169,38 +214,139 @@ export function extractGuidance(event: GuiEventEnvelope): {
   sealedOpenRatio?: number
   sampleQuality?: string
 } {
+  const context = asRecord(event.data.context)
+  const compactRatios = asRecord(event.data.r)
+  const contextRatios = asRecord(context.r)
+  const ratios = asRecord(event.data.ratios)
+  const sealed = asRecord(event.data.sealed)
+  const compactSealed = asRecord(event.data.s)
   return {
-    guidance: asString(event.data.guidance),
-    sealedOpenRatio: asNumber(event.data.sealed_open_ratio),
-    sampleQuality: asString(event.data.sample_quality),
+    guidance:
+      asString(event.data.guidance) ??
+      asString(event.data.phase1_guidance) ??
+      asString(event.data.g) ??
+      asString(context.g),
+    sealedOpenRatio:
+      asNumber(event.data.sealed_open_ratio) ??
+      asNumber(ratios.sealed_open_ratio) ??
+      asNumber(ratios.so) ??
+      asNumber(compactRatios.so) ??
+      asNumber(contextRatios.so),
+    sampleQuality:
+      asString(event.data.sample_quality) ??
+      (asBoolean(sealed.quality_ok) === false || asBoolean(sealed.q) === false || asBoolean(compactSealed.q) === false
+        ? 'repeat'
+        : asBoolean(sealed.quality_ok) === true || asBoolean(sealed.q) === true || asBoolean(compactSealed.q) === true
+          ? 'acceptable'
+          : undefined),
+  }
+}
+
+export function deriveGuidanceFromMeasurements(measurements: Record<string, MeasurementSummary>): {
+  guidance?: string
+  sealedOpenRatio?: number
+  sampleQuality?: string
+} {
+  const open = measurements.open
+  const nozzle = measurements.nozzle
+  const sealed = measurements.sealed
+  if (!open || !sealed || open.slpm <= 0) {
+    return {}
+  }
+
+  const sampleQuality =
+    open.sample_quality === 'acceptable' &&
+    sealed.sample_quality === 'acceptable' &&
+    (!nozzle || nozzle.sample_quality === 'acceptable')
+      ? 'acceptable'
+      : 'repeat'
+  const sealedOpenRatio = sealed.slpm / open.slpm
+  if (!Number.isFinite(sealedOpenRatio)) {
+    return {
+      guidance: 'REPEAT_INVALID_RATIO',
+      sampleQuality,
+    }
+  }
+
+  if (sampleQuality !== 'acceptable') {
+    return {
+      guidance: 'REPEAT_MEASUREMENT_QUALITY',
+      sealedOpenRatio,
+      sampleQuality,
+    }
+  }
+
+  if (sealedOpenRatio < 0.25) {
+    return {
+      guidance: 'ACCEPT_SINGLE_PASS',
+      sealedOpenRatio,
+      sampleQuality,
+    }
+  }
+
+  if (sealedOpenRatio < 0.28) {
+    return {
+      guidance: 'RESEAT_AND_REPEAT_BORDERLINE',
+      sealedOpenRatio,
+      sampleQuality,
+    }
+  }
+
+  return {
+    guidance: 'RESEAT_AND_REPEAT_SUSPECT_FAIL',
+    sealedOpenRatio,
+    sampleQuality,
   }
 }
 
 export function extractMeasurement(event: GuiEventEnvelope): MeasurementSummary | null {
-  const phase = asString(event.data.phase)
+  const context = asRecord(event.data.context)
+  const artifacts = asRecord(event.data.artifacts)
+  const artifactMeasurement = asRecord(artifacts.measurement)
+  const compactMeasurement = asRecord(context.m)
+  const source = Object.keys(artifactMeasurement).length
+    ? artifactMeasurement
+    : Object.keys(compactMeasurement).length
+      ? compactMeasurement
+      : event.data
+
+  const phase = asString(event.data.phase) ?? phaseFromStepName(asString(event.data.step_name))
   if (phase !== 'open' && phase !== 'nozzle' && phase !== 'sealed') {
     return null
   }
 
-  const slpm = asNumber(event.data.slpm)
+  const slpm = asNumber(source.flow_slpm_mean) ?? asNumber(source.slpm)
   if (slpm === undefined) {
     return null
   }
 
+  const qualityOk = asBoolean(source.quality_ok) ?? asBoolean(source.q)
   return {
     phase,
+    valid: asBoolean(source.valid),
+    sample_count: asNumber(source.sample_count) ?? asNumber(source.cnt),
     slpm,
-    raw_mean_slpm: asNumber(event.data.raw_mean_slpm) ?? slpm,
-    median_slpm: asNumber(event.data.median_slpm) ?? slpm,
-    stddev_slpm: asNumber(event.data.stddev_slpm) ?? 0,
-    min_slpm: asNumber(event.data.min_slpm) ?? slpm,
-    max_slpm: asNumber(event.data.max_slpm) ?? slpm,
-    trimmed_count: asNumber(event.data.trimmed_count) ?? 24,
-    outlier_count: asNumber(event.data.outlier_count) ?? 6,
-    coefficient_of_variation: asNumber(event.data.coefficient_of_variation) ?? 0,
-    sample_quality: event.data.sample_quality === 'repeat' ? 'repeat' : 'acceptable',
-    settle_ms: asNumber(event.data.settle_ms) ?? 12000,
-    dt_ms: asNumber(event.data.dt_ms) ?? 100,
+    raw_mean_slpm: asNumber(source.flow_slpm_raw_mean) ?? asNumber(source.raw_mean_slpm) ?? asNumber(source.raw) ?? slpm,
+    median_slpm: asNumber(source.flow_slpm_median) ?? asNumber(source.median_slpm) ?? asNumber(source.med) ?? slpm,
+    stddev_slpm: asNumber(source.flow_slpm_stddev) ?? asNumber(source.stddev_slpm) ?? asNumber(source.sd) ?? 0,
+    min_slpm: asNumber(source.flow_slpm_min) ?? asNumber(source.min_slpm) ?? asNumber(source.min) ?? slpm,
+    max_slpm: asNumber(source.flow_slpm_max) ?? asNumber(source.max_slpm) ?? asNumber(source.max) ?? slpm,
+    trimmed_count: asNumber(source.trimmed_sample_count) ?? asNumber(source.trimmed_count) ?? asNumber(source.trim_cnt) ?? 24,
+    outlier_count: asNumber(source.outlier_count) ?? asNumber(source.out) ?? 6,
+    coefficient_of_variation:
+      asNumber(source.coefficient_of_variation) ?? asNumber(source.cv) ?? 0,
+    sample_quality:
+      source.sample_quality === 'repeat' || qualityOk === false ? 'repeat' : 'acceptable',
+    stability_limit_slpm: asNumber(source.stability_limit_slpm),
+    settle_ms: asNumber(source.settle_ms) ?? 12000,
+    dt_ms: asNumber(source.dt_ms) ?? 100,
+    fan_pwm_pct: asNumber(source.fan_pwm_pct) ?? asNumber(source.pwm),
+    rpm: asNumber(source.rpm),
+    pressure_hpa: asNumber(source.pressure_hpa) ?? asNumber(source.p),
+    temperature_c: asNumber(source.temperature_c) ?? asNumber(source.t),
+    environment_source: asString(source.environment_source) ?? asString(source.src),
+    flow_lpm_mean: asNumber(source.flow_lpm_mean) ?? asNumber(source.lpm),
+    flow_slpm_samples: asNumberArray(source.flow_slpm_samples),
   }
 }
 
@@ -228,6 +374,38 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function readinessCheckPassed(value: unknown): boolean | undefined {
+  if (typeof value === 'number') {
+    if (value === 1) return true
+    if (value === 0) return false
+    return undefined
+  }
+  if (typeof value === 'boolean') return value
+
+  const check = asRecord(value)
+  if (Object.keys(check).length === 0) return undefined
+  if (check.skipped === true) return undefined
+  return check.ok === true
+}
+
+function asNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const samples = value.filter((sample): sample is number => typeof sample === 'number' && Number.isFinite(sample))
+  return samples.length ? samples : undefined
+}
+
+function phaseFromStepName(stepName?: string): TestPhase | undefined {
+  if (!stepName) return undefined
+  if (stepName.includes('OPEN')) return 'open'
+  if (stepName.includes('NOZZLE')) return 'nozzle'
+  if (stepName.includes('SEALED')) return 'sealed'
+  return undefined
 }
 
 function capitalize(value: string): string {
