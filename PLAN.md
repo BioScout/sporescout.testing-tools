@@ -132,4 +132,8 @@
   - Packaged all-mode mock smoke passed after the rebuild with exact phase-list assertions for Full, Mechanics, and Optics.
 - 2026-05-12: Added a COM8-pinned prepare-only verifier that refuses any port other than COM8 and sends only non-motion `system GetFirmwareVersion`, `test linear_stage status`, and `test linear_stage prepare/status` commands before allowing any GUI motion rerun.
 - 2026-05-12: Exact-target post-abort readiness remains blocked: Particle product-scoped `system GetFirmwareVersion` and `test linear_stage prepare` calls to device id `0a10aced202194944a051970` returned only the weak function return `0` with no `CommandResponse`, and local COM8 opened but timed out waiting for `system GetFirmwareVersion`. Treat the approved device command path as busy or wedged; do not start another motion run until a non-motion command produces an authoritative response.
+- 2026-05-12: CM4 software branch `codex/ss-a-0013-linear-stage-validation` is clean and pushed with two commits:
+  - `e68de9a` CM4 linear-stage validation support baseline.
+  - `8953e7c` optics-only homing, optical exception, park, and progress-state hardening.
+  - CM4 software-only validation passed 44/44 pytest cases plus py_compile for the touched route/model/routine/task-runner files.
 - Split-mode firmware command validation and a completed local COM8 GUI validation remain pending.
