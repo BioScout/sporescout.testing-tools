@@ -147,5 +147,5 @@
   - `node --check verification\serial-linear-stage-prepare-only-com8.mjs`
   - `npm run package:dir`
   - Packaged all-mode mock smoke passed for Full, Mechanics, and Optics after the rebuild.
-- 2026-05-12: GitHub Actions Release workflow succeeded for commit `dc44498cddedc338ca978369fb267026b35d84d5`, closing the checked-out-commit portable artifact gap for that commit. A new artifact check will be needed after the final dashboard trace fix is pushed.
+- 2026-05-12: GitHub Actions Release workflow succeeded for commit `837d46fe4241e939b1cc31bbb30558622de65e90`. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified checked-out-commit workflow run `25688588017` and artifact `sporescout-testing-tools-portable`. HEAD is not an exact tag, so exact-tag release download was correctly skipped.
 - Full/optics real split-mode validation and a post-fix COM8 GUI rerun remain pending. Current blocker is CM4 target deployment: the deployed CM4 still returns `full_function` for a requested mechanics-only task, while the CM4 split-mode branch is pushed but not deployed because SSH/RMS access remains unavailable from this Windows host.
