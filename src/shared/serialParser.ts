@@ -1,4 +1,4 @@
-import type { GuiEventEnvelope, GuiResponseEnvelope, ParsedSerialLine } from './contracts'
+import type { GuiEventEnvelope, GuiResponseEnvelope, LocalRunContext, MirroredEventRecord, ParsedSerialLine } from './contracts'
 
 const RESPONSE_PREFIX = '@SSGUI:RSP '
 const EVENT_PREFIX = '@SSGUI:EVT '
@@ -59,6 +59,9 @@ function normalizeResponseEnvelope(value: unknown): GuiResponseEnvelope {
     command: String(source.command ?? ''),
     result: source.result,
     error: typeof source.error === 'string' ? source.error : undefined,
+    result_omitted: typeof source.result_omitted === 'boolean' ? source.result_omitted : undefined,
+    result_json_bytes: asOptionalNumber(source.result_json_bytes),
+    message: typeof source.message === 'string' ? source.message : undefined,
     firmware_version: asOptionalNumber(source.firmware_version),
     device_id: asOptionalString(source.device_id),
     product_id: asOptionalNumber(source.product_id),
@@ -99,25 +102,43 @@ export function parseLegacyCommandResponse(line: string): GuiResponseEnvelope | 
 export function mirroredEventRecordFromEnvelope(
   envelope: GuiEventEnvelope,
   rawLine?: string,
-): {
-  event_name: string
-  data: Record<string, unknown>
-  raw_line?: string
-  local_timestamp: string
-  device_id?: string
-  product_id?: number
-  firmware_version?: number
-  run_uid?: string
-  cartridge_serial?: string
-  upload_status: 'local_only'
-} {
-  const runUid = asOptionalString(envelope.data.run_uid)
+  context?: LocalRunContext,
+): MirroredEventRecord {
+  const eventContext = asRecord(envelope.data.context)
+  const eventRunUid = asOptionalString(envelope.data.run_uid)
+    ?? asOptionalString(envelope.data.run)
+    ?? asOptionalString(eventContext.run_uid)
+    ?? asOptionalString(eventContext.run)
+  const runUid = eventRunUid ?? context?.run_uid
+  const linearStageRunId =
+    context?.linear_stage_run_id ??
+    asOptionalString(envelope.data.linear_stage_run_id) ??
+    asOptionalString(envelope.data.linearStageRunId) ??
+    asOptionalString(eventContext.linear_stage_run_id) ??
+    asOptionalString(eventContext.linearStageRunId)
+  const linearStageMode =
+    asOptionalLinearStageMode(envelope.data.linear_stage_mode) ??
+    asOptionalLinearStageMode(envelope.data.mode) ??
+    asOptionalLinearStageMode(eventContext.linear_stage_mode) ??
+    asOptionalLinearStageMode(eventContext.mode) ??
+    context?.linear_stage_mode
+  const allowGenericSerialAsCartridge = context?.workflow === 'cartridge_subassembly' || isCartridgeEvent(envelope)
   const cartridgeSerial =
     asOptionalString(envelope.data.cartridge_serial) ??
     asOptionalString(envelope.data.cartridge) ??
-    asOptionalString(envelope.data.serial)
+    asOptionalString(envelope.data.cart) ??
+    (allowGenericSerialAsCartridge ? asOptionalString(envelope.data.serial) : undefined) ??
+    asOptionalString(eventContext.cartridge_serial) ??
+    asOptionalString(eventContext.cartridge) ??
+    asOptionalString(eventContext.cart) ??
+    (allowGenericSerialAsCartridge ? asOptionalString(eventContext.serial) : undefined) ??
+    context?.cartridge_serial
+
+  const idempotencyKey = buildIdempotencyKey(envelope, runUid, cartridgeSerial, rawLine)
 
   return {
+    event_id: idempotencyKey,
+    idempotency_key: idempotencyKey,
     event_name: envelope.event_name,
     data: envelope.data,
     raw_line: rawLine,
@@ -126,7 +147,19 @@ export function mirroredEventRecordFromEnvelope(
     product_id: envelope.product_id,
     firmware_version: envelope.firmware_version,
     run_uid: runUid,
+    firmware_run_uid: eventRunUid && eventRunUid !== context?.run_uid ? eventRunUid : undefined,
     cartridge_serial: cartridgeSerial,
+    station_id: context?.station_id,
+    operator: context?.operator,
+    batch: context?.batch,
+    tester_device_serial: context?.tester_device_serial,
+    enclosure_base_id: context?.enclosure_base_id,
+    nozzle_id: context?.nozzle_id,
+    seal_fixture_id: context?.seal_fixture_id,
+    workflow: context?.workflow,
+    linear_stage_run_id: linearStageRunId,
+    linear_stage_mode: linearStageMode,
+    jsonl_status: 'pending',
     upload_status: 'local_only',
   }
 }
@@ -158,4 +191,49 @@ function asOptionalString(value: unknown): string | undefined {
 
 function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function asOptionalLinearStageMode(value: unknown): MirroredEventRecord['linear_stage_mode'] {
+  return value === 'full' || value === 'mechanics' || value === 'optics' ? value : undefined
+}
+
+function isCartridgeEvent(envelope: GuiEventEnvelope): boolean {
+  const text = `${envelope.event_name} ${JSON.stringify(envelope.data)}`.toLowerCase()
+  return text.includes('cartridge') || text.includes('air_leak')
+}
+
+function buildIdempotencyKey(
+  envelope: GuiEventEnvelope,
+  runUid?: string,
+  cartridgeSerial?: string,
+  rawLine?: string,
+): string {
+  const seed = [
+    envelope.event_name,
+    envelope.device_id,
+    envelope.product_id,
+    envelope.firmware_version,
+    envelope.timestamp_ms,
+    runUid,
+    cartridgeSerial,
+    asOptionalString(envelope.data.evt_type),
+    asOptionalString(envelope.data.step_name),
+    asOptionalString(envelope.data.test_name),
+    rawLine ?? JSON.stringify(envelope.data),
+  ]
+    .filter((value) => value !== undefined && value !== '')
+    .join('|')
+
+  return `evt_${fnv1a64(seed)}`
+}
+
+function fnv1a64(value: string): string {
+  let hash = 0xcbf29ce484222325n
+  const prime = 0x100000001b3n
+  const mask = 0xffffffffffffffffn
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index))
+    hash = (hash * prime) & mask
+  }
+  return hash.toString(16).padStart(16, '0')
 }

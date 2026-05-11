@@ -1,0 +1,113 @@
+# PLAN
+
+## Branch Purpose
+
+- Branch: codex/bau-phase-1-cartridge-subassembly-tester-p01
+- Repo or worktree: sporescout.testing-tools
+- Goal: Testing Tools linear-stage split-mode manufacturing dashboard and portable Windows launch path.
+- Risk class: Class 3, hardware-adjacent operator UI and serial command dispatch.
+- Planning status: Approved in the current thread. Implementation is active.
+
+## Workspace And Resource Claims
+
+- Real writable worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.testing-tools
+- Paired firmware worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.msom
+- Reference docs: C:\GitHub\sporescout.agents
+- Current-thread approved real device: SS-A-001-101A-0013 only.
+- Approved device details: Particle id 0a10aced202194944a051970, local serial COM8 when plugged in, SSH alias SS-A-001-101A-0013.
+- Exact-port validation path: set SPORESCOUT_TESTING_TOOLS_EXACT_PORT=COM8 for real local GUI validation.
+- Forbidden device behavior: do not probe, list-test, flash, reboot, command, SSH, serial-connect, or inspect any other real device.
+
+## Approved Scope
+
+- Split the Linear Stage page into operator-selectable modes:
+  - Full test
+  - Mechanics-only / no optics
+  - Optics-only
+- Derive operator commands from mode:
+  - test linear_stage full
+  - test linear_stage mechanics
+  - test linear_stage optics
+- Keep engineering-only legacy aliases in the engineering drawer, but keep the normal operator flow on canonical commands.
+- Show mode-specific current phase, completed pass/fail state, next phase, early fail status, artifacts, metadata, and history.
+- Carry `linear_stage_mode` through active run context, serial parsing, mirrored records, mock device results, and history.
+- Keep stage-clear arming mandatory and one-shot for all modes.
+- Tighten command validation to exact command matching with no trailing arguments.
+- Add a one-click Windows launch path from a cloned repo using a prebuilt portable app artifact by default, with explicit source/bootstrap fallback only.
+
+## Out Of Scope
+
+- Do not interact with any real device other than SS-A-001-101A-0013.
+- Do not claim browser Web Serial can enforce exact COM port selection.
+- Do not make mock mode silently satisfy exact-port real-device validation.
+- Do not revert unrelated dirty work from prior UI and cartridge-subassembly changes.
+
+## Execution Slices
+
+1. Refresh branch-local execution files.
+2. Add shared mode contracts and command policy.
+3. Extract linear-stage mode workflow helpers.
+4. Update Linear Stage page, mock device, serial parser, storage/history, and tests.
+5. Add portable launch scripts, manifest, package scripts, README, and release workflow updates.
+6. Run no-device UI/build/package validation.
+7. Run real COM8 GUI validation on SS-A-001-101A-0013 only after firmware/device validation is ready.
+8. Commit logical blocks without reverting unrelated dirty work.
+
+## Validation Plan
+
+- `npm test`
+- `npm run typecheck`
+- `npm run build`
+- `npm run package:dir`
+- `npm run dist:portable`
+- Mock-mode UI smoke for all three modes.
+- Packaged launcher smoke using local release output.
+- Clean-clone launcher smoke by simulating no local portable artifact and confirming the GitHub release-download path.
+- Real GUI serial validation with SPORESCOUT_TESTING_TOOLS_EXACT_PORT=COM8 on SS-A-001-101A-0013 only.
+
+## Current State
+
+- 2026-05-11: Created task branch from `main` preserving the existing dirty worktree.
+- 2026-05-11: Planning and five parallel inspection subagents completed. Implementation is now active.
+- 2026-05-12: Added shared linear-stage mode contracts, exact command validation, mode-aware Linear Stage workflow helpers, UI mode selector plumbing, mock mode responses/events, and mirrored record parsing/indexing.
+- 2026-05-12: Focused validation passed: `npm run typecheck`; `npm test -- --run src/shared/contracts.test.ts src/shared/serialParser.test.ts src/features/linearStage/linearStageWorkflow.test.ts`.
+- 2026-05-12: Added dedicated `runLinearStageTest` API/IPC path. Generic active-run context cannot arm stage-clear; main process stamps fresh one-shot stage-clear arm id/timestamp and stores the pre-consume audit context with the command record.
+- 2026-05-12: Browser preview is mock-only by default. Real serial validation must use Electron, and exact-port validation must set `SPORESCOUT_TESTING_TOOLS_EXACT_PORT=COM8`.
+- 2026-05-12: Added linear-stage mirrored-event columns/indexes (`workflow`, `linear_stage_run_id`, `linear_stage_mode`) and preserved separate local run id plus firmware run uid for history.
+- 2026-05-12: Updated live-run parsing to use active mode fallback, reject mismatched modes/local run ids, surface live artifacts, and mark omitted final payloads as fail/incomplete instead of pass.
+- 2026-05-12: Added portable Windows launch path: root `.cmd`, manifest-driven PowerShell launcher, portable/default electron-builder scripts, release workflow, README docs, and automatic GitHub latest-release portable download for clean clones.
+- 2026-05-12: Aligned UI planned step order with CM4 execution and live firmware progress: `CM4 task running`, initialize, mechanical subchecks, optical region, scan audit, direct optical checks, park.
+- 2026-05-12: Review findings addressed:
+  - Packaging clean-clone gap fixed with GitHub release download path.
+  - Browser Web Serial exact-port bypass fixed by mock-only default.
+  - Stage-clear bypass fixed with dedicated IPC/API path.
+  - Legacy alias mode mismatch fixed with centralized alias-to-mode mapping and engineering-only allowance.
+  - Stale legacy linear-stage response matching narrowed to the oversized-response fallback window.
+  - Live artifacts, omitted-result failure state, and active-mode event numbering fixed.
+- 2026-05-12: Current no-device validation passed:
+  - `npm run typecheck`
+  - `npm test` passed 37 tests.
+  - `npm run build`
+  - `npm run dist:portable` produced `release\SporeScout Testing Tools-0.1.0-x64-portable.exe`.
+  - `.\scripts\launch-windows.ps1 -DryRun` resolved the portable EXE.
+  - Simulated clean-clone dry-run with empty `portableCandidates` reported the GitHub latest-release download path.
+- 2026-05-12: Packaged `file://` routing bug fixed by using hash history for packaged Electron renderer loads. The not-found recovery button now uses router navigation.
+- 2026-05-12: Final live trace now exposes the exact executed linear-stage command in the Current context panel, and mock GUI events include the `command` field to match firmware summary envelopes.
+- 2026-05-12: Release workflow now also runs on branch pushes so clean-clone launch can use the latest successful Actions portable artifact before a tagged GitHub release exists.
+- 2026-05-12: All-mode packaged Electron mock smoke passed through the rebuilt `release\win-unpacked\SporeScout Testing Tools.exe` over CDP. It exercised Full, Mechanics, and Optics modes, verified live phase/result/next/artifact context, verified command visibility, and asserted that Mechanics excludes optics phases while Optics excludes mechanical qualification phases. Screenshots were written as `output\linear-stage-mock-live-feedback-full.png`, `-mechanics.png`, and `-optics.png`.
+- 2026-05-12: Review-driven dashboard/launcher fixes applied:
+  - Stage-clear is now a separate `armLinearStageTest` IPC/API token consumed by `runLinearStageTest`; the run call no longer accepts renderer-supplied context that can self-arm motion.
+  - Full-mode mock responses now include all mechanical-only checks (`derated current margin` and `X front-limit diagnosis`) before optics.
+  - The packaged CDP smoke asserts the exact ordered phase list for Full, Mechanics, and Optics.
+  - The release workflow runs that packaged all-mode smoke after packaging and before uploading the portable artifact.
+  - The launcher no longer treats non-portable `*-x64.exe` installers as portable candidates, downloads releases only for an exact checked-out tag, and downloads Actions artifacts only when the run `head_sha` matches the checked-out commit.
+  - README private-repo auth guidance now documents token, `gh auth token`, and HTTPS Git Credential Manager behavior.
+- 2026-05-12: Latest no-device validation passed:
+  - `npm run typecheck`
+  - `npm test` passed 37 tests.
+  - `npm run dist:portable` rebuilt `release\SporeScout Testing Tools-0.1.0-x64-portable.exe`.
+  - Packaged all-mode mock smoke passed with exact phase-list assertions.
+  - `.\scripts\launch-windows.ps1 -DryRun` and `.\Launch-SporeScout-Testing-Tools.cmd -DryRun` resolved the local portable EXE.
+  - Simulated clean-clone dry-run with no local portable candidate reported exact-tag GitHub release first, then a checked-out-commit Actions artifact fallback (`6575fd51f7eb` in this worktree).
+  - Fixed the launcher branch metadata path for untagged branches: `git describe --exact-match` failures are non-fatal, and the script avoids PowerShell null-conditional syntax for Windows compatibility.
+- No current-thread real-device command has been run yet.

@@ -2,7 +2,7 @@
   "name": "sporescout.testing-tools",
   "private": true,
   "version": "0.1.0",
-  "description": "SporeScout Cartridge Subassembly Tester local dashboard app",
+  "description": "SporeScout manufacturing testing tools local dashboard app",
   "author": "BioScout",
   "type": "module",
   "main": "out/main/main.js",
@@ -15,8 +15,13 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "preview": "electron-vite preview",
-    "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "package": "npm run package:dir",
+    "package:dir": "npm run build && electron-builder --dir",
+    "dist": "npm run dist:portable",
+    "dist:portable": "npm run build && electron-builder --win portable --publish never",
+    "dist:installer": "npm run build && electron-builder --win nsis --publish never",
+    "dist:all": "npm run build && electron-builder --win portable nsis --publish never",
+    "release:portable": "npm run build && electron-builder --win portable --publish always"
   },
   "dependencies": {
     "@emotion/react": "^11.11.4",
@@ -62,7 +67,7 @@
   },
   "build": {
     "appId": "au.com.bioscout.sporescout.testing-tools",
-    "productName": "SporeScout Cartridge Subassembly Tester",
+    "productName": "SporeScout Testing Tools",
     "directories": {
       "output": "release"
     },
@@ -77,9 +82,12 @@
     "win": {
       "signAndEditExecutable": false,
       "target": [
-        "nsis"
+        "portable"
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -94,5 +102,15 @@
         "private": true
       }
     ]
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BioScout/sporescout.testing-tools.git"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/BioScout/sporescout.testing-tools/issues"
+  },
+  "homepage": "https://github.com/BioScout/sporescout.testing-tools#readme"
 }

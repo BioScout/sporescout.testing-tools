@@ -1,0 +1,52 @@
+{
+  "name": "SporeScout Testing Tools",
+  "version": 1,
+  "portableCandidates": [
+    "release/SporeScout Testing Tools-*-portable.exe",
+    "release/win-unpacked/SporeScout Testing Tools.exe"
+  ],
+  "releaseDownload": {
+    "provider": "github",
+    "owner": "BioScout",
+    "repo": "sporescout.testing-tools",
+    "releaseByTagApiTemplate": "https://api.github.com/repos/BioScout/sporescout.testing-tools/releases/tags/{tag}",
+    "assetPatterns": [
+      "SporeScout Testing Tools-*-portable.exe"
+    ],
+    "destinationDirectory": "release",
+    "tokenEnvironmentVariables": [
+      "SPORESCOUT_TESTING_TOOLS_RELEASE_TOKEN",
+      "GITHUB_TOKEN"
+    ],
+    "useGhAuth": true,
+    "useGitCredentials": true
+  },
+  "artifactDownload": {
+    "provider": "github",
+    "owner": "BioScout",
+    "repo": "sporescout.testing-tools",
+    "workflowRunsApi": "https://api.github.com/repos/BioScout/sporescout.testing-tools/actions/workflows/release.yml/runs?status=success&per_page=20",
+    "artifactNamePatterns": [
+      "sporescout-testing-tools-portable*"
+    ],
+    "assetPatterns": [
+      "SporeScout Testing Tools-*-portable.exe"
+    ],
+    "destinationDirectory": "release",
+    "tokenEnvironmentVariables": [
+      "SPORESCOUT_TESTING_TOOLS_RELEASE_TOKEN",
+      "GITHUB_TOKEN"
+    ],
+    "useGhAuth": true,
+    "useGitCredentials": true
+  },
+  "sourceFallback": {
+    "nodeCandidates": [
+      "tools/node/node.exe",
+      ".node/node.exe",
+      "node/node.exe"
+    ],
+    "npmScript": "dev",
+    "installCommand": "ci"
+  }
+}

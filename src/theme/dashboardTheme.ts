@@ -33,6 +33,11 @@ export const dashboardTheme = createTheme({
     borderRadius: 8,
   },
   components: {
+    MuiTooltip: {
+      defaultProps: {
+        disableInteractive: true,
+      },
+    },
     MuiButton: {
       styleOverrides: {
         root: {
