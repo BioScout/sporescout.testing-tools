@@ -136,4 +136,16 @@
   - `e68de9a` CM4 linear-stage validation support baseline.
   - `8953e7c` optics-only homing, optical exception, park, and progress-state hardening.
   - CM4 software-only validation passed 44/44 pytest cases plus py_compile for the touched route/model/routine/task-runner files.
-- Split-mode firmware command validation and a completed local COM8 GUI validation remain pending.
+- 2026-05-12: Exact-target command path recovered before the real GUI rerun: product-scoped `system GetFirmwareVersion` returned `9003001`, and `test linear_stage prepare` returned READY for SS-A-001-101A-0013 only.
+- 2026-05-12: Real packaged COM8 GUI mechanics-mode run on approved target SS-A-001-101A-0013 only completed to final review. Live feedback showed the exact `test linear_stage mechanics` command, current/next/latest cards, and the full 17-step mechanics planned phase list while running. Final firmware result was FAIL because M-SoM rejected the deployed CM4 response as stale/mismatched: requested `mechanics_only`/`service`, returned `full_function`/`service`.
+- 2026-05-12: Post-run exact-target `test linear_stage prepare` returned READY again, so the approved device command path and idle/readiness checks recovered after the failed mechanics run.
+- 2026-05-12: Review-driven dashboard fix applied after the real mechanics failure: final live traces now merge partial firmware summaries back into the planned mode step list by step name, keep unreported phases visible, and label inactive pending phases as `Not reported`. The real validator now rejects timeout/omitted-payload review states instead of accepting them as authoritative final firmware responses.
+- 2026-05-12: Post-fix validation passed:
+  - `npm run typecheck`
+  - `npm test` passed 37/37 tests.
+  - `node --check verification\electron-linear-stage-real-com8-cdp.mjs`
+  - `node --check verification\serial-linear-stage-prepare-only-com8.mjs`
+  - `npm run package:dir`
+  - Packaged all-mode mock smoke passed for Full, Mechanics, and Optics after the rebuild.
+- 2026-05-12: GitHub Actions Release workflow succeeded for commit `dc44498cddedc338ca978369fb267026b35d84d5`, closing the checked-out-commit portable artifact gap for that commit. A new artifact check will be needed after the final dashboard trace fix is pushed.
+- Full/optics real split-mode validation and a post-fix COM8 GUI rerun remain pending. Current blocker is CM4 target deployment: the deployed CM4 still returns `full_function` for a requested mechanics-only task, while the CM4 split-mode branch is pushed but not deployed because SSH/RMS access remains unavailable from this Windows host.

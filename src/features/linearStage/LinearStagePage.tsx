@@ -1547,6 +1547,7 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
   const failedSteps = liveRun.steps.filter((step) => step.status === 'fail')
   const failed = failedSteps.length
   const warned = liveRun.steps.filter((step) => step.status === 'warn').length
+  const unreported = liveRun.active ? 0 : liveRun.steps.filter((step) => step.status === 'pending').length
   const current = liveRun.steps.find((step) => step.status === 'running')
   const next = current
     ? liveRun.steps.find((step) => step.number > current.number && step.status === 'pending')
@@ -1559,6 +1560,8 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
     ? `Now: ${current.number}. ${current.name}`
     : liveRun.active && next
       ? `Between phases: ${completed}/${liveRun.steps.length} complete. Waiting for ${next.number}. ${next.name} to start.`
+      : unreported
+        ? `Run ended with ${unreported}/${liveRun.steps.length} planned phases not reported.`
       : next
         ? `Next: ${next.number}. ${next.name}`
         : 'All planned steps have reported.'
@@ -1569,6 +1572,8 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
       : 'No active phase.'
   const nextFallback = liveRun.active
     ? 'Waiting for the final firmware response.'
+    : unreported
+      ? 'No further phases reported after the failure.'
     : 'All planned phases reported.'
 
   return (
@@ -1604,9 +1609,9 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
 
       <Box sx={{ p: 1.5 }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 1, mb: 1.5 }}>
-          <LivePhaseCard title="Now" step={current} fallback={nowFallback} />
-          <LivePhaseCard title="Latest result" step={lastCompleted} fallback="No phase has completed yet." />
-          <LivePhaseCard title="Next up" step={next} fallback={nextFallback} />
+          <LivePhaseCard title="Now" step={current} active={liveRun.active} fallback={nowFallback} />
+          <LivePhaseCard title="Latest result" step={lastCompleted} active={liveRun.active} fallback="No phase has completed yet." />
+          <LivePhaseCard title="Next up" step={next} active={liveRun.active} fallback={nextFallback} />
         </Box>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.3fr) minmax(320px, 0.7fr)' }, gap: 1.5 }}>
           <Box>
@@ -1635,7 +1640,7 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
                             {step.number}. {step.name}
                           </Typography>
                           <Typography variant="caption" color={liveStepTextColor(step.status)}>
-                            {liveStepLabel(step.status)}
+                            {liveStepLabel(step.status, liveRun.active)}
                           </Typography>
                         </Stack>
                         {(step.measured !== undefined || step.error) && (
@@ -1760,7 +1765,7 @@ function LiveLinearStagePanel({ liveRun, elapsedMs }: { liveRun: LiveLinearStage
   )
 }
 
-function LivePhaseCard({ title, step, fallback }: { title: string; step?: LiveLinearStageStep; fallback: string }) {
+function LivePhaseCard({ title, step, active, fallback }: { title: string; step?: LiveLinearStageStep; active: boolean; fallback: string }) {
   return (
     <Box
       sx={{
@@ -1784,7 +1789,7 @@ function LivePhaseCard({ title, step, fallback }: { title: string; step?: LiveLi
             </Typography>
           </Stack>
           <Typography variant="caption" color={liveStepTextColor(step.status)}>
-            {liveStepLabel(step.status)}
+            {liveStepLabel(step.status, active)}
           </Typography>
           {(step.measured !== undefined || step.error) && (
             <Typography variant="caption" color={step.status === 'fail' ? 'error.main' : 'text.secondary'} sx={{ display: 'block', overflowWrap: 'anywhere' }}>
@@ -2411,16 +2416,63 @@ function summarizeLiveLinearStageRun(current: LiveLinearStageRun | null, runId: 
 }
 
 function liveRunFromSummary(summary: LinearStageSummary, previous: LiveLinearStageRun | null): LiveLinearStageRun {
+  const mode = summary.mode ?? previous?.mode ?? 'full'
+  const completedAt = new Date().toISOString()
   return {
     runId: summary.runId,
     command: summary.command,
-    mode: summary.mode ?? previous?.mode ?? 'full',
+    mode,
     startedAt: previous?.startedAt ?? new Date().toISOString(),
     active: false,
     overallStatus: summary.status,
     metadata: [`Final result: ${statusLabel(summary.status)}`, ...(previous?.metadata ?? [])].slice(0, 30),
     artifacts: mergeArtifactLines(previous?.artifacts ?? [], extractArtifactLines(asRecord(summary.raw).artifacts)),
-    steps: summary.steps.map((step) => ({
+    steps: mergeSummaryStepsIntoLiveTrace(summary.steps, previous, mode, completedAt),
+  }
+}
+
+function mergeSummaryStepsIntoLiveTrace(
+  summarySteps: LinearStageStep[],
+  previous: LiveLinearStageRun | null,
+  mode: LinearStageMode,
+  completedAt: string,
+): LiveLinearStageStep[] {
+  const baseSteps = previous?.steps.length
+    ? previous.steps
+    : plannedStepsForLinearStageMode(mode).map((name, index): LiveLinearStageStep => ({
+        number: index + 1,
+        name,
+        status: 'pending',
+        source: 'planned',
+      }))
+  const summaryByName = new Map<string, LinearStageStep>()
+  for (const step of summarySteps) {
+    summaryByName.set(normalizeStepNameKey(step.name), step)
+  }
+  const consumed = new Set<LinearStageStep>()
+  const merged = baseSteps.map((baseStep): LiveLinearStageStep => {
+    const summaryStep = summaryByName.get(normalizeStepNameKey(baseStep.name))
+    if (!summaryStep) {
+      return {
+        ...baseStep,
+        status: baseStep.status === 'running' ? 'pending' : baseStep.status,
+      }
+    }
+    consumed.add(summaryStep)
+    return {
+      ...baseStep,
+      status: liveStatusFromStepResult(summaryStep.result),
+      expected: summaryStep.expected ?? baseStep.expected,
+      measured: summaryStep.measured ?? baseStep.measured,
+      error: summaryStep.error,
+      source: 'serial',
+      completedAt,
+    }
+  })
+
+  for (const step of summarySteps) {
+    if (consumed.has(step)) continue
+    merged.push({
       number: step.number,
       name: step.name,
       status: liveStatusFromStepResult(step.result),
@@ -2428,9 +2480,15 @@ function liveRunFromSummary(summary: LinearStageSummary, previous: LiveLinearSta
       measured: step.measured,
       error: step.error,
       source: 'serial',
-      completedAt: new Date().toISOString(),
-    })),
+      completedAt,
+    })
   }
+
+  return merged.sort((left, right) => left.number - right.number)
+}
+
+function normalizeStepNameKey(name: string): string {
+  return stripStepNumber(name).trim().toLowerCase()
 }
 
 function summarizeLinearStageResult(result: unknown, runId: string, command: string, fallbackMode: LinearStageMode): LinearStageSummary {
@@ -2869,12 +2927,12 @@ function isLiveStepComplete(status: LiveLinearStageStepStatus): boolean {
   return status === 'pass' || status === 'warn' || status === 'fail'
 }
 
-function liveStepLabel(status: LiveLinearStageStepStatus): string {
+function liveStepLabel(status: LiveLinearStageStepStatus, active = true): string {
   if (status === 'pass') return 'Pass'
   if (status === 'warn') return 'Warning'
   if (status === 'fail') return 'Fail'
   if (status === 'running') return 'Running now'
-  return 'Upcoming'
+  return active ? 'Upcoming' : 'Not reported'
 }
 
 function liveStepTextColor(status: LiveLinearStageStepStatus): string {

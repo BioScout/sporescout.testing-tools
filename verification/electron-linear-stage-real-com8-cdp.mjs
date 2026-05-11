@@ -457,12 +457,14 @@ try {
     const buttons = Array.from(document.querySelectorAll('button')).map((button) => button.innerText.trim());
     const resultStatus = document.querySelector('[data-linear-stage-result-summary]')?.getAttribute('data-linear-stage-result-status');
     const liveActive = document.querySelector('[data-linear-stage-live-active]')?.getAttribute('data-linear-stage-live-active');
+    const timeoutReview = /timed out before|No response before timeout|result payload was not captured|payload was omitted/i.test(text);
     return document.querySelector('[data-linear-stage-workflow-step="review"]') &&
       buttons.includes('Next run') &&
       buttons.includes('Repeat test') &&
       buttons.includes('Exit') &&
       ['pass', 'fail', 'warn'].includes(resultStatus ?? '') &&
       liveActive === 'false' &&
+      !timeoutReview &&
       text.includes(${jsString(`${selectedMode.label} live trace`)}) &&
       text.includes(${jsString(selectedMode.command)}) &&
       !text.includes(${jsString(`${selectedMode.heading} in progress`)}) &&
@@ -474,9 +476,11 @@ try {
     const records = Array.from(document.querySelectorAll('table tbody tr')).slice(0, 25).map((row) => row.innerText.replace(/\\s+/g, ' | '));
     const finalStatus = document.querySelector('[data-linear-stage-result-summary]')?.getAttribute('data-linear-stage-result-status') ?? null;
     const liveActive = document.querySelector('[data-linear-stage-live-active]')?.getAttribute('data-linear-stage-live-active') ?? null;
+    const hasTimeoutReview = /timed out before|No response before timeout|result payload was not captured|payload was omitted/i.test(text);
     return {
       finalStatus,
       liveActive,
+      hasTimeoutReview,
       hasPayloadOmittedWarning: text.includes('result payload was not captured') || text.includes('payload was omitted'),
       hasHistogram: text.includes('Measurement histograms') || text.includes('Metric histogram') || text.includes('histogram'),
       hasHistoricalRecords: text.includes('Historical records') || text.includes('Full local retention'),
@@ -488,6 +492,7 @@ try {
     };
   })()`)
   log(`RESULT_SUMMARY ${JSON.stringify(resultSummary)}`)
+  if (resultSummary.hasTimeoutReview) throw new Error('GUI reached a timeout or omitted-payload review state instead of an authoritative final firmware response.')
   if (resultSummary.hasPayloadOmittedWarning) throw new Error('GUI stopped at omitted payload instead of using the legacy full result.')
   if (!resultSummary.hasHistoricalRecords) throw new Error('Historical records panel was not visible.')
   if (!resultSummary.hasLiveTrace) throw new Error('Expected final review to preserve the live phase trace.')
