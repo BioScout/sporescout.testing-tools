@@ -155,3 +155,17 @@
   - `C:\Program Files\OpenVPN\config-auto` is not writable from this session, and this OpenVPN install does not include `openvpn-gui.exe` for interactive-service launch. This confirms the remaining blocker is host RMS/VPN route setup, not a Testing Tools packaging or dashboard blocker.
 - 2026-05-12: GitHub Actions Release workflow run `25689895495` for commit `b09eddcdc9e33a53b7722863c0502233d4568b8c` completed successfully after the latest plan-note push. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`; HEAD is not an exact tag, so exact-tag release download was correctly skipped.
 - 2026-05-12: GitHub Actions Release workflow run `25690379439` for current commit `eccc9a819bacd263889cc993286dc66abbc502b2` completed successfully. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`; this plan-only record is committed with `[skip ci]` to avoid another verification loop.
+- 2026-05-12: RMS/VPN route was restored from this host and CM4 source commit `88696aee3a6b15087c3f43a6b251dfc3c508c79f` was transferred to approved device SS-A-001-101A-0013 only. The CM4 dev process is running from `/home/bioscout/dev/device.golden-eye-codex-linear-stage-ss0013-src`, production `golden-eye.service` is intentionally stopped during the bounded dev session, and the device must be restored to production service before final handoff.
+- 2026-05-12: Post-CM4-deploy exact-target COM8 readiness passed with firmware `9003001` and `test linear_stage prepare` READY.
+- 2026-05-12: Real packaged COM8 GUI mechanics validation against approved target SS-A-001-101A-0013 only exposed a dashboard merge bug in final review: firmware step numbering omitted the synthetic `CM4 task running` phase, causing final trace step 2 to be overwritten by `Initialise Steppers`. The UI now resolves known planned step names by active mode and preserves synthetic phases in final traces.
+- 2026-05-12: Post-fix validation passed:
+  - `npm test -- --run src/features/linearStage/linearStageWorkflow.test.ts`
+  - `npm run typecheck`
+  - `npm run package:dir`
+  - Packaged all-mode mock smoke passed for Full, Mechanics, and Optics with exact phase-list assertions.
+- 2026-05-12: Patched packaged COM8 GUI mechanics validation against approved target SS-A-001-101A-0013 only passed the validator. The UI showed the exact `test linear_stage mechanics` command, current/latest/next cards, full 17-step mechanics phase list, authoritative final FAIL, historical records, histograms, and preserved final live trace. The remaining device-level failure is now firmware/transport: M-SoM reports `Initialise Steppers` fail `-40 | kErrInvalidResponse` even though the approved CM4 dev log shows split-mode `mechanics_only` progress and completion. Firmware/CM4 compact task polling is being implemented before full/optics real validation.
+- 2026-05-12: Updated the COM8-pinned prepare-only verifier so the expected firmware version can be supplied by CLI arg or `SPORESCOUT_EXPECTED_FIRMWARE_VERSION`. It remains COM8-only and non-motion. Validation passed:
+  - `node --check verification\serial-linear-stage-prepare-only-com8.mjs`
+  - `npm test -- --run src/features/linearStage/linearStageWorkflow.test.ts`
+  - `npm run typecheck`
+- Next exact-target prepare checks after OTA must call the verifier with expected firmware `9003002`.

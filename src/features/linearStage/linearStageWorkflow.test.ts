@@ -5,6 +5,7 @@ import {
   modeForLinearStageCommand,
   plannedStepNumberForLinearStageMode,
   plannedStepsForLinearStageMode,
+  knownPlannedStepNumberForLinearStageMode,
 } from './linearStageWorkflow'
 
 describe('linearStageWorkflow', () => {
@@ -34,5 +35,12 @@ describe('linearStageWorkflow', () => {
     expect(plannedStepNumberForLinearStageMode('3x3 scan audit', 'optics')).toBe(5)
     expect(plannedStepNumberForLinearStageMode('3x3 scan audit', 'full')).toBeGreaterThan(15)
     expect(plannedStepNumberForLinearStageMode('Unplanned firmware step', 'mechanics')).toBe(plannedStepsForLinearStageMode('mechanics').length + 1)
+  })
+
+  it('returns known planned numbers without shifting synthetic dashboard phases', () => {
+    expect(knownPlannedStepNumberForLinearStageMode('CM4 task running', 'mechanics')).toBe(2)
+    expect(knownPlannedStepNumberForLinearStageMode('Initialise Steppers', 'mechanics')).toBe(3)
+    expect(knownPlannedStepNumberForLinearStageMode('2 | Initialise Steppers', 'mechanics')).toBe(3)
+    expect(knownPlannedStepNumberForLinearStageMode('Unplanned firmware step', 'mechanics')).toBeUndefined()
   })
 })

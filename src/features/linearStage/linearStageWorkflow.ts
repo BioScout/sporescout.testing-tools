@@ -104,22 +104,32 @@ export function plannedStepsForLinearStageMode(mode: LinearStageMode | undefined
 }
 
 export function plannedStepNumberForLinearStageMode(stepName: string, mode?: LinearStageMode): number {
-  const normalized = stepName.trim().toLowerCase()
   const steps = plannedStepsForLinearStageMode(mode)
-  const modeIndex = steps.findIndex((name) => name.toLowerCase() === normalized)
-  if (modeIndex !== -1) return modeIndex + 1
+  const modeIndex = knownPlannedStepNumberForLinearStageMode(stepName, mode)
+  if (modeIndex !== undefined) return modeIndex
 
   for (const candidate of LINEAR_STAGE_MODE_ORDER) {
-    const candidateSteps = plannedStepsForLinearStageMode(candidate)
-    const index = candidateSteps.findIndex((name) => name.toLowerCase() === normalized)
-    if (index !== -1) return index + 1
+    const index = knownPlannedStepNumberForLinearStageMode(stepName, candidate)
+    if (index !== undefined) return index
   }
 
   return steps.length + 1
+}
+
+export function knownPlannedStepNumberForLinearStageMode(stepName: string | undefined, mode?: LinearStageMode): number | undefined {
+  const normalized = normalizeStepName(stepName)
+  if (!normalized) return undefined
+  const steps = plannedStepsForLinearStageMode(mode)
+  const modeIndex = steps.findIndex((name) => normalizeStepName(name) === normalized)
+  return modeIndex === -1 ? undefined : modeIndex + 1
 }
 
 export function normalizeLinearStageMode(value: unknown): LinearStageMode | undefined {
   if (typeof value !== 'string') return undefined
   const normalized = value.trim().toLowerCase()
   return LINEAR_STAGE_MODE_ORDER.find((mode) => mode === normalized)
+}
+
+function normalizeStepName(value: string | undefined): string {
+  return (value ?? '').replace(/^\d+\s*\|\s*/, '').trim().toLowerCase()
 }

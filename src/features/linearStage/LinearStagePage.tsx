@@ -74,6 +74,7 @@ import {
   LINEAR_STAGE_MODE_CONFIGS,
   LINEAR_STAGE_MODE_ORDER,
   commandForLinearStageMode,
+  knownPlannedStepNumberForLinearStageMode,
   modeForLinearStageCommand,
   normalizeLinearStageMode,
   plannedStepNumberForLinearStageMode,
@@ -2309,9 +2310,10 @@ function applyLiveLinearStageUpdate(current: LiveLinearStageRun | null, update: 
     }
   }
 
-  const steps = ensureLiveStep(current.steps, update.number, update.name ?? `Step ${update.number}`)
+  const updateNumber = liveUpdateStepNumber(current, update)
+  const steps = ensureLiveStep(current.steps, updateNumber, update.name ?? `Step ${updateNumber}`)
   const nextSteps = steps.map((step) => {
-    if (step.number !== update.number) {
+    if (step.number !== updateNumber) {
       if (update.kind === 'start' && step.status === 'running') {
         return { ...step, status: 'pending' as const }
       }
@@ -2344,18 +2346,33 @@ function applyLiveLinearStageUpdate(current: LiveLinearStageRun | null, update: 
   })
 
   const metadata = update.kind === 'result'
-    ? [`${update.number}. ${update.name ?? nextSteps.find((step) => step.number === update.number)?.name ?? 'Step'}: ${update.result}${update.error ? ` - ${update.error}` : ''}`, ...current.metadata]
-    : [`Started ${update.number}. ${update.name}`, ...current.metadata]
+    ? [`${updateNumber}. ${update.name ?? nextSteps.find((step) => step.number === updateNumber)?.name ?? 'Step'}: ${update.result}${update.error ? ` - ${update.error}` : ''}`, ...current.metadata]
+    : [`Started ${updateNumber}. ${update.name}`, ...current.metadata]
 
   return {
     ...current,
     firmwareRunId,
     steps: nextSteps,
-    currentStepNumber: update.kind === 'start' ? update.number : current.currentStepNumber,
+    currentStepNumber: update.kind === 'start' ? updateNumber : current.currentStepNumber,
     lastLine: update.raw,
     artifacts,
     metadata: metadata.slice(0, 30),
   }
+}
+
+function liveUpdateStepNumber(current: LiveLinearStageRun, update: Extract<LiveLinearStageUpdate, { kind: 'start' } | { kind: 'result' }>): number {
+  if (update.kind === 'start' || (update.kind === 'result' && update.name)) {
+    return knownPlannedStepNumberForLinearStageMode(update.name, update.mode ?? current.mode) ?? update.number
+  }
+
+  if (update.kind === 'result' && current.currentStepNumber !== undefined) {
+    const runningStep = current.steps.find((step) => step.number === current.currentStepNumber)
+    if (runningStep?.status === 'running') {
+      return current.currentStepNumber
+    }
+  }
+
+  return update.number
 }
 
 function ensureLiveStep(steps: LiveLinearStageStep[], number: number, name: string): LiveLinearStageStep[] {

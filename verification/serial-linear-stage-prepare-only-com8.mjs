@@ -11,7 +11,11 @@ const [
   ,,
   portPath = 'COM8',
   logPath = 'output/linear-stage-prepare-only-com8.log',
+  expectedFirmwareVersionArg,
 ] = process.argv
+const expectedFirmwareVersion = expectedFirmwareVersionArg
+  ?? process.env.SPORESCOUT_EXPECTED_FIRMWARE_VERSION
+  ?? '9003001'
 
 if (portPath !== 'COM8') {
   throw new Error(`This verifier is pinned to approved local serial COM8. Refusing ${portPath}.`)
@@ -101,10 +105,11 @@ await new Promise((resolve, reject) => port.open((error) => error ? reject(error
 
 try {
   log(`Opened approved exact port ${portPath}`)
+  log(`Expected firmware version ${expectedFirmwareVersion}`)
   await delay(2500)
 
   const version = await run(port, 'system GetFirmwareVersion', 30000)
-  if (!(version.ok === true && Number(version.result) === 9003001)) {
+  if (!(version.ok === true && String(version.result) === expectedFirmwareVersion)) {
     throw new Error(`Unexpected firmware version response: ${JSON.stringify(version)}`)
   }
 
