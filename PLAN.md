@@ -131,7 +131,7 @@
   - `npm run package:dir` rebuilt `release\win-unpacked\SporeScout Testing Tools.exe`.
   - Packaged all-mode mock smoke passed after the rebuild with exact phase-list assertions for Full, Mechanics, and Optics.
 - 2026-05-12: Added a COM8-pinned prepare-only verifier that refuses any port other than COM8 and sends only non-motion `system GetFirmwareVersion`, `test linear_stage status`, and `test linear_stage prepare/status` commands before allowing any GUI motion rerun.
-- 2026-05-12: Exact-target post-abort readiness remains blocked: Particle product-scoped `system GetFirmwareVersion` and `test linear_stage prepare` calls to device id `0a10aced202194944a051970` returned only the weak function return `0` with no `CommandResponse`, and local COM8 opened but timed out waiting for `system GetFirmwareVersion`. Treat the approved device command path as busy or wedged; do not start another motion run until a non-motion command produces an authoritative response.
+- 2026-05-12: Exact-target post-abort readiness was initially blocked: Particle product-scoped `system GetFirmwareVersion` and `test linear_stage prepare` calls to device id `0a10aced202194944a051970` returned only the weak function return `0` with no `CommandResponse`, and local COM8 opened but timed out waiting for `system GetFirmwareVersion`. This was later recovered before the mechanics GUI rerun; do not start any further motion unless a fresh non-motion command produces an authoritative response.
 - 2026-05-12: CM4 software branch `codex/ss-a-0013-linear-stage-validation` is clean and pushed with two commits:
   - `e68de9a` CM4 linear-stage validation support baseline.
   - `8953e7c` optics-only homing, optical exception, park, and progress-state hardening.
@@ -149,3 +149,7 @@
   - Packaged all-mode mock smoke passed for Full, Mechanics, and Optics after the rebuild.
 - 2026-05-12: GitHub Actions Release workflow succeeded for commit `837d46fe4241e939b1cc31bbb30558622de65e90`. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified checked-out-commit workflow run `25688588017` and artifact `sporescout-testing-tools-portable`. HEAD is not an exact tag, so exact-tag release download was correctly skipped.
 - Full/optics real split-mode validation and a post-fix COM8 GUI rerun remain pending. Current blocker is CM4 target deployment: the deployed CM4 still returns `full_function` for a requested mechanics-only task, while the CM4 split-mode branch is pushed but not deployed because SSH/RMS access remains unavailable from this Windows host.
+- 2026-05-12: Local-only RMS VPN triage narrowed the CM4 deployment blocker:
+  - The existing user profile `RMS_VPN_CONFIG_1777894641937.ovpn` connects to the Teltonika endpoint and assigns `192.168.255.6` to the TAP adapter.
+  - Running OpenVPN directly from this non-elevated session cannot add Windows routes (`Access is denied`), so `192.168.1.0/24` still routes through local WiFi.
+  - `C:\Program Files\OpenVPN\config-auto` is not writable from this session, and this OpenVPN install does not include `openvpn-gui.exe` for interactive-service launch. This confirms the remaining blocker is host RMS/VPN route setup, not a Testing Tools packaging or dashboard blocker.

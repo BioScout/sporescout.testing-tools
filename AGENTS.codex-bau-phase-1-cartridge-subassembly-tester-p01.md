@@ -15,7 +15,7 @@
 - Approved target device in this thread: SS-A-001-101A-0013 only.
 - Approved target details: Particle id 0a10aced202194944a051970, COM8 when plugged in, SSH alias SS-A-001-101A-0013.
 - Device rule: before any real-device action, restate that the action is only for SS-A-001-101A-0013. Never interact with any other real device.
-- Current validation state: no-device desktop validation passed, including packaged all-mode mock smoke through the rebuilt Electron app with exact ordered phase-list assertions; no current-thread device validation has run yet.
+- Current validation state: no-device desktop validation passed, including packaged all-mode mock smoke through the rebuilt Electron app with exact ordered phase-list assertions. Current-thread validation on approved device SS-A-001-101A-0013 only has flashed and activated M-SoM firmware version `9003001`, exercised COM8 readiness and a packaged mechanics-mode GUI run, and verified post-run `test linear_stage prepare` readiness. The real mechanics run ended in an expected FAIL because the deployed CM4 returned a stale/mismatched `full_function` response for a requested `mechanics_only` task, so full split-mode validation remains blocked until the pushed CM4 branch can be deployed.
 
 ## Implementation Notes
 
@@ -34,7 +34,7 @@
 ## Required Validation
 
 - Completed no-device: unit tests, typecheck, build, portable packaging, launcher dry-run, simulated clean-clone launcher dry-run, packaged Electron smoke for Full/Mechanics/Optics.
-- Remaining: real GUI serial validation on SS-A-001-101A-0013 only after firmware/CM4 deployment readiness.
+- Remaining: after CM4 split-mode deployment to SS-A-001-101A-0013, rerun real GUI serial validation on the approved target only, covering the post-fix mechanics rerun plus full and optics split modes as hardware readiness allows.
 
 ## Handoff Notes
 
