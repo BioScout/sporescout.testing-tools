@@ -119,4 +119,7 @@
   - Real COM8 validation script now requires `getRuntimeConfig()` to report Electron exact-port `COM8` before any serial port listing.
   - Final response artifacts are merged into the live trace instead of being dropped when previous live artifacts exist as an empty array.
 - GitHub Actions release artifact availability and real-device validation remain pending after these fixes are validated and pushed.
-- No current-thread real-device command has been run yet.
+- 2026-05-12: Firmware preflight/OTA/runtime activation was completed on approved device SS-A-001-101A-0013 only before GUI motion validation. The correct Particle product id is `33608` (not platform id `35`), preflight showed OTA enabled, the branch binary was flashed, and `system GetFirmwareVersion` returned `9003001`.
+- 2026-05-12: GitHub Actions Release workflow run `25683466062` for commit `49aa1c461c3b47efccfe0c0b0484ae5cf6456fcc` completed successfully. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`; HEAD is intentionally not an exact tag, so the exact-tag release check was skipped.
+- CM4 dev-session deployment is currently blocked by local RMS/VPN routing: approved CM4 reports hostname `SS-A-001-101A-0013`, IP `192.168.1.179`, SSH service active, and `golden-eye.service` active through M-SoM/COM8, but the Windows host has no active OpenVPN/RMS route and `Test-NetConnection 192.168.1.179:22` routes via local WiFi and fails.
+- Split-mode firmware command validation and real COM8 GUI validation remain pending.
