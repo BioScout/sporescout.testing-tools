@@ -149,6 +149,9 @@ const browserApi: TestingToolsApi = {
 
     return { ok: true }
   },
+  async getRuntimeConfig() {
+    return { serialBackend: 'browser' }
+  },
   async sendCommand(command: string) {
     if (command.trim() === 'solenoid Lock') {
       clearBrowserSolenoidRelockTimer()
@@ -668,7 +671,7 @@ function getBrowserSerial(): BrowserSerial | undefined {
 }
 
 function browserWebSerialEnabled(): boolean {
-  return window.localStorage.getItem('sporescout.testing-tools.enableBrowserSerial') === '1'
+  return false
 }
 
 function resolveGrantedBrowserPort(path?: string): BrowserSerialPort | undefined {

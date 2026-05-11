@@ -28,7 +28,7 @@
   - test linear_stage full
   - test linear_stage mechanics
   - test linear_stage optics
-- Keep engineering-only legacy aliases in the engineering drawer, but keep the normal operator flow on canonical commands.
+- Keep the app's operator and engineering UI on canonical split-mode commands. Firmware preserves legacy aliases for manual engineering compatibility outside the app.
 - Show mode-specific current phase, completed pass/fail state, next phase, early fail status, artifacts, metadata, and history.
 - Carry `linear_stage_mode` through active run context, serial parsing, mirrored records, mock device results, and history.
 - Keep stage-clear arming mandatory and one-shot for all modes.
@@ -62,7 +62,7 @@
 - `npm run dist:portable`
 - Mock-mode UI smoke for all three modes.
 - Packaged launcher smoke using local release output.
-- Clean-clone launcher smoke by simulating no local portable artifact and confirming the GitHub release-download path.
+- Clean-clone launcher smoke by simulating no local portable artifact and confirming exact-tag release and checked-out-commit GitHub Actions artifact selection. Artifact availability must be verified after a successful release workflow run.
 - Real GUI serial validation with SPORESCOUT_TESTING_TOOLS_EXACT_PORT=COM8 on SS-A-001-101A-0013 only.
 
 ## Current State
@@ -81,7 +81,7 @@
   - Packaging clean-clone gap fixed with GitHub release download path.
   - Browser Web Serial exact-port bypass fixed by mock-only default.
   - Stage-clear bypass fixed with dedicated IPC/API path.
-  - Legacy alias mode mismatch fixed with centralized alias-to-mode mapping and engineering-only allowance.
+  - Legacy alias mode mismatch fixed in shared command mapping; the app dispatch path remains canonical-only.
   - Stale legacy linear-stage response matching narrowed to the oversized-response fallback window.
   - Live artifacts, omitted-result failure state, and active-mode event numbering fixed.
 - 2026-05-12: Current no-device validation passed:
@@ -108,6 +108,15 @@
   - `npm run dist:portable` rebuilt `release\SporeScout Testing Tools-0.1.0-x64-portable.exe`.
   - Packaged all-mode mock smoke passed with exact phase-list assertions.
   - `.\scripts\launch-windows.ps1 -DryRun` and `.\Launch-SporeScout-Testing-Tools.cmd -DryRun` resolved the local portable EXE.
-  - Simulated clean-clone dry-run with no local portable candidate reported exact-tag GitHub release first, then a checked-out-commit Actions artifact fallback (`6575fd51f7eb` in this worktree).
+  - Simulated clean-clone dry-run with no local portable candidate reported exact-tag GitHub release first, then a checked-out-commit Actions artifact fallback (`6575fd51f7eb` in this worktree). This dry-run did not prove remote artifact availability.
   - Fixed the launcher branch metadata path for untagged branches: `git describe --exact-match` failures are non-fatal, and the script avoids PowerShell null-conditional syntax for Windows compatibility.
+- 2026-05-12: Follow-up no-device review found pre-device validation blockers. Fixes are in progress:
+  - Regenerate and commit `package-lock.json` so GitHub Actions `npm ci` can package a portable artifact.
+  - Launcher now has a `-VerifyDownloadAvailability` mode and exact-commit workflow-run lookup template instead of relying on a shallow latest-runs page.
+  - Renderer and Electron IPC are being hardened so connection mode, COM port, reconnect, and run metadata cannot change during an active or review-stage linear-stage run.
+  - Electron main process now tracks a single in-flight linear-stage command, rejects reconnect/disconnect/new arm/new run during motion, validates IPC argument shapes, and revalidates stage-clear freshness immediately before serial write.
+  - Browser preview Web Serial is fully disabled; it remains mock-only.
+  - Real COM8 validation script now requires `getRuntimeConfig()` to report Electron exact-port `COM8` before any serial port listing.
+  - Final response artifacts are merged into the live trace instead of being dropped when previous live artifacts exist as an empty array.
+- GitHub Actions release artifact availability and real-device validation remain pending after these fixes are validated and pushed.
 - No current-thread real-device command has been run yet.

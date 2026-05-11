@@ -13,6 +13,7 @@ const api: TestingToolsApi = {
   listSerialPorts: () => ipcRenderer.invoke('serial:listPorts'),
   connect: (request: ConnectRequest) => ipcRenderer.invoke('serial:connect', request),
   disconnect: () => ipcRenderer.invoke('serial:disconnect'),
+  getRuntimeConfig: () => ipcRenderer.invoke('runtime:getConfig'),
   sendCommand: (command: string) => ipcRenderer.invoke('serial:sendCommand', command),
   armLinearStageTest: (context: LocalRunContext) => ipcRenderer.invoke('linearStage:arm', context),
   runLinearStageTest: (armId: string, command: string) => ipcRenderer.invoke('linearStage:run', armId, command),

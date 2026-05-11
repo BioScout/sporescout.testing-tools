@@ -46,6 +46,7 @@ let solenoidRelockTimer: NodeJS.Timeout | undefined
 let serialCommandQueue: Promise<unknown> = Promise.resolve()
 let connectionGeneration = 0
 let engineeringUnlocked = false
+let linearStageRunInFlight: { command: string; startedAt: string } | undefined
 
 interface PendingResponse {
   command: string
@@ -114,6 +115,11 @@ app.on('window-all-closed', () => {
 })
 
 function registerIpcHandlers(): void {
+  ipcMain.handle('runtime:getConfig', async () => ({
+    serialBackend: 'electron' as const,
+    exactSerialPort: process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim() || undefined,
+  }))
+
   ipcMain.handle('serial:listPorts', async () => {
     const exactPort = process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim()
     if (exactPort) {
@@ -132,7 +138,20 @@ function registerIpcHandlers(): void {
     }))
   })
 
-  ipcMain.handle('serial:connect', async (_event, request: ConnectRequest) => {
+  ipcMain.handle('serial:connect', async (_event, value: unknown) => {
+    const request = normalizeConnectRequest(value)
+    if (!request) {
+      return { ok: false, mode: 'serial' as const, error: 'Invalid serial connection request.' }
+    }
+    if (linearStageRunInFlight) {
+      return {
+        ok: false,
+        mode: request.mode,
+        path: request.path,
+        error: `Cannot change tester connection while ${linearStageRunInFlight.command} is running.`,
+      }
+    }
+
     disconnectSerial()
 
     const exactPort = process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim()
@@ -208,11 +227,17 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('serial:disconnect', async () => {
+    if (linearStageRunInFlight) {
+      return { ok: false, error: `Cannot disconnect while ${linearStageRunInFlight.command} is running.` }
+    }
     disconnectSerial()
     return { ok: true }
   })
 
-  ipcMain.handle('serial:sendCommand', async (_event, command: string) => {
+  ipcMain.handle('serial:sendCommand', async (_event, command: unknown) => {
+    if (typeof command !== 'string') {
+      return { accepted: false, command: '', error: 'Invalid command.' } satisfies CommandDispatchResult
+    }
     if (command.trim() === 'solenoid Lock') {
       clearSolenoidRelockTimer()
     }
@@ -220,7 +245,13 @@ function registerIpcHandlers(): void {
     return await dispatchCommand(command)
   })
 
-  ipcMain.handle('linearStage:arm', async (_event, context: LocalRunContext) => {
+  ipcMain.handle('linearStage:arm', async (_event, context: unknown) => {
+    if (linearStageRunInFlight) {
+      return { ok: false, error: `Cannot arm another linear-stage run while ${linearStageRunInFlight.command} is running.` }
+    }
+    if (!isPlainRecord(context)) {
+      return { ok: false, error: 'Linear-stage run context is required.' }
+    }
     const normalizedContext = normalizeRunContext(context)
     if (normalizedContext?.workflow !== 'linear_stage') {
       return { ok: false, error: 'Linear-stage run context is required.' }
@@ -249,7 +280,13 @@ function registerIpcHandlers(): void {
     return { ok: true, armId, armedAt }
   })
 
-  ipcMain.handle('linearStage:run', async (_event, armId: string, command: string) => {
+  ipcMain.handle('linearStage:run', async (_event, armId: unknown, command: unknown) => {
+    if (typeof command !== 'string') {
+      return { accepted: false, command: '', error: 'Invalid linear-stage command.' } satisfies CommandDispatchResult
+    }
+    if (linearStageRunInFlight) {
+      return { accepted: false, command, error: `Cannot start another linear-stage run while ${linearStageRunInFlight.command} is running.` }
+    }
     const expectedArmId = typeof armId === 'string' ? armId.trim() : ''
     if (
       !expectedArmId ||
@@ -303,7 +340,10 @@ function registerIpcHandlers(): void {
     }
     store.saveOverride(normalizeOverrideRecord(override))
   })
-  ipcMain.handle('storage:setActiveRunContext', async (_event, context?: LocalRunContext) => {
+  ipcMain.handle('storage:setActiveRunContext', async (_event, context?: unknown) => {
+    if (context !== undefined && !isPlainRecord(context)) {
+      throw new Error('Invalid active run context.')
+    }
     if (context?.stage_clear_confirmed || context?.stage_clear_arm_id || context?.stage_clear_armed_at) {
       throw new Error('Stage-clear arming must use the dedicated linear-stage run control.')
     }
@@ -336,6 +376,7 @@ async function dispatchCommand(
 
   command = policy.command
   const auditContext = activeRunContext
+  const linearStageMotionContext = policy.consumesLinearStageArm ? activeRunContext : undefined
   if (policy.consumesLinearStageArm) {
     consumeLinearStageMotionArm()
   }
@@ -346,33 +387,54 @@ async function dispatchCommand(
     emitSerialLine(`Local storage command write failed: ${error instanceof Error ? error.message : 'unknown error'}`)
   }
 
-  if (connectionMode === 'mock' && mockDevice) {
-    const response = await mockDevice.send(command)
-    return { accepted: true, command, response }
+  const execute = async (): Promise<CommandDispatchResult> => {
+    if (connectionMode === 'mock' && mockDevice) {
+      const response = await mockDevice.send(command)
+      return { accepted: true, command, response }
+    }
+
+    if (connectionMode !== 'serial' || !serialPort?.isOpen) {
+      return { accepted: false, command, error: 'Serial device is not connected.' }
+    }
+
+    return enqueueSerialCommand(command, linearStageMotionContext)
   }
 
-  if (connectionMode !== 'serial' || !serialPort?.isOpen) {
-    return { accepted: false, command, error: 'Serial device is not connected.' }
-  }
-
-  return enqueueSerialCommand(command)
+  return linearStageMotionContext ? runLinearStageCommandInFlight(command, execute) : execute()
 }
 
-function enqueueSerialCommand(command: string): Promise<CommandDispatchResult> {
+async function runLinearStageCommandInFlight(command: string, execute: () => Promise<CommandDispatchResult>): Promise<CommandDispatchResult> {
+  linearStageRunInFlight = { command, startedAt: new Date().toISOString() }
+  try {
+    return await execute()
+  } finally {
+    linearStageRunInFlight = undefined
+  }
+}
+
+function enqueueSerialCommand(command: string, linearStageMotionContext?: LocalRunContext): Promise<CommandDispatchResult> {
   const generation = connectionGeneration
   const run = serialCommandQueue.then(
-    () => sendSerialCommand(command, generation),
-    () => sendSerialCommand(command, generation),
+    () => sendSerialCommand(command, generation, linearStageMotionContext),
+    () => sendSerialCommand(command, generation, linearStageMotionContext),
   )
   serialCommandQueue = run.catch(() => undefined)
   return run
 }
 
-function sendSerialCommand(command: string, generation: number): Promise<CommandDispatchResult> {
+function sendSerialCommand(command: string, generation: number, linearStageMotionContext?: LocalRunContext): Promise<CommandDispatchResult> {
   return new Promise((resolve) => {
     if (generation !== connectionGeneration || connectionMode !== 'serial' || !serialPort?.isOpen) {
       resolve({ accepted: false, command, error: 'Serial connection changed before command could be sent.' })
       return
+    }
+
+    if (linearStageMotionContext) {
+      const writePolicy = validateGuiCommand(command, linearStageMotionContext, { allowLinearStageMotion: true })
+      if (writePolicy.ok === false) {
+        resolve({ accepted: false, command: writePolicy.command, error: writePolicy.error })
+        return
+      }
     }
 
     const timeout = setTimeout(() => {
@@ -508,6 +570,7 @@ function clearPendingTimers(pending: PendingResponse): void {
 }
 
 function disconnectSerial(): void {
+  linearStageRunInFlight = undefined
   if (solenoidRelockTimer && serialPort?.isOpen) {
     serialPort.write('solenoid Lock\n')
   }
@@ -538,6 +601,7 @@ function handleSerialConnectionLost(message: string): void {
     return
   }
 
+  linearStageRunInFlight = undefined
   clearSolenoidRelockTimer()
   connectionGeneration += 1
   for (const pending of pendingResponses.splice(0)) {
@@ -616,7 +680,22 @@ function consumeLinearStageMotionArm(): void {
   }
 }
 
-function normalizeRunContext(context?: LocalRunContext): LocalRunContext | undefined {
+function normalizeConnectRequest(value: unknown): ConnectRequest | undefined {
+  if (!isPlainRecord(value)) return undefined
+  const mode = value.mode === 'mock' || value.mode === 'serial' ? value.mode : undefined
+  if (!mode) return undefined
+  const path = cleanContextValue(value.path)
+  const baudRate = typeof value.baudRate === 'number' && Number.isFinite(value.baudRate) && value.baudRate > 0
+    ? Math.trunc(value.baudRate)
+    : undefined
+  return { mode, path, baudRate }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function normalizeRunContext(context?: Record<string, unknown> | LocalRunContext): LocalRunContext | undefined {
   if (!context) return undefined
   const normalized: LocalRunContext = {
     operator: cleanContextValue(context.operator),
@@ -713,18 +792,21 @@ function normalizeOverrideRecord(value: OverrideRecord): OverrideRecord {
   }
 }
 
-function normalizeCartridgePhase(value?: string): LocalRunContext['cartridge_phase'] | undefined {
+function normalizeCartridgePhase(value?: unknown): LocalRunContext['cartridge_phase'] | undefined {
   return value === 'open' || value === 'nozzle' || value === 'sealed' || value === 'complete'
     ? value
     : undefined
 }
 
-function normalizeLinearStageMode(value?: string): LinearStageMode | undefined {
+function normalizeLinearStageMode(value?: unknown): LinearStageMode | undefined {
   return value === 'full' || value === 'mechanics' || value === 'optics' ? value : undefined
 }
 
-function cleanContextValue(value?: string): string | undefined {
-  const trimmed = value?.trim()
+function cleanContextValue(value?: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
   if (!trimmed || trimmed.length > 120 || hasControlCharacter(trimmed)) {
     return undefined
   }

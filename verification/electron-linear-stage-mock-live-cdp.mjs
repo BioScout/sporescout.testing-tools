@@ -249,6 +249,18 @@ async function selectLinearStageMode(client, shortLabel, expectedCommand) {
   })()`, 10000)
 }
 
+async function resetReviewIfNeeded(client) {
+  const clicked = await client.evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll('button')).find((item) => item.innerText.trim() === 'Next run');
+    if (!button) return false;
+    button.scrollIntoView({ block: 'center', inline: 'center' });
+    button.click();
+    return true;
+  })()`)
+  if (!clicked) return
+  await waitFor(client, 'review reset', `document.body.innerText.includes('Stage area is clear') || document.body.innerText.includes('Confirm stage area')`, 10000)
+}
+
 async function saveScreenshot(client, path) {
   const result = await client.send('Page.captureScreenshot', { format: 'png', fromSurface: true }, 60000)
   fs.mkdirSync(pathModule.dirname(path), { recursive: true })
@@ -262,6 +274,7 @@ function screenshotPathForMode(basePath, modeLabel) {
 }
 
 async function runMockLinearStageMode(client, modeLabel, expectedCommand, screenshotPath) {
+  await resetReviewIfNeeded(client)
   await selectLinearStageMode(client, modeLabel, expectedCommand)
   await setStageClear(client)
   await clickButton(client, 'Confirm readiness')

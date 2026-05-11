@@ -416,6 +416,7 @@ export interface TestingToolsApi {
   listSerialPorts: () => Promise<SerialPortInfo[]>
   connect: (request: ConnectRequest) => Promise<{ ok: boolean; mode: ConnectionMode; path?: string; error?: string }>
   disconnect: () => Promise<{ ok: boolean }>
+  getRuntimeConfig: () => Promise<{ serialBackend: 'electron' | 'browser'; exactSerialPort?: string }>
   sendCommand: (command: string) => Promise<CommandDispatchResult>
   armLinearStageTest: (context: LocalRunContext) => Promise<LinearStageArmResult>
   runLinearStageTest: (armId: string, command: string) => Promise<CommandDispatchResult>

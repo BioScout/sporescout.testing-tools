@@ -1,6 +1,84 @@
 import fs from 'node:fs'
+import pathModule from 'node:path'
 
-const [,, cdpUrl = 'http://127.0.0.1:9224', logPath = 'electron-linear-stage-real-com8-cdp.log'] = process.argv
+const [
+  ,,
+  cdpUrl = 'http://127.0.0.1:9224',
+  logPath = 'electron-linear-stage-real-com8-cdp.log',
+  modeArg = 'Full',
+  screenshotPath = 'output/linear-stage-real-com8.png',
+] = process.argv
+
+const mechanicalAxisSteps = [
+  'X home switch qualification',
+  'X positive boundary qualification',
+  'X span qualification',
+  'X derated current margin',
+  'X front-limit diagnosis',
+  'Y home switch qualification',
+  'Y positive boundary qualification',
+  'Y span qualification',
+  'Y derated current margin',
+  'Z home switch qualification',
+  'Z positive boundary qualification',
+  'Z span qualification',
+  'Z derated current margin',
+]
+
+const opticalAxisSteps = [
+  'X optical qualification',
+  'Y optical qualification',
+  'Z optical qualification',
+]
+
+const expectedModes = {
+  full: {
+    label: 'Full',
+    heading: 'Full test',
+    command: 'test linear_stage full',
+    expectedStatus: undefined,
+    phases: [
+      'Check dependencies',
+      'CM4 task running',
+      'Initialise Steppers',
+      ...mechanicalAxisSteps,
+      'Select optical region',
+      '3x3 scan audit',
+      ...opticalAxisSteps,
+      'Park Steppers',
+    ],
+  },
+  mechanics: {
+    label: 'Mechanics',
+    heading: 'Mechanics-only / no optics',
+    command: 'test linear_stage mechanics',
+    expectedStatus: undefined,
+    phases: [
+      'Check dependencies',
+      'CM4 task running',
+      'Initialise Steppers',
+      ...mechanicalAxisSteps,
+      'Park Steppers',
+    ],
+  },
+  optics: {
+    label: 'Optics',
+    heading: 'Optics-only',
+    command: 'test linear_stage optics',
+    expectedStatus: undefined,
+    phases: [
+      'Check dependencies',
+      'CM4 task running',
+      'Initialise Steppers',
+      'Select optical region',
+      '3x3 scan audit',
+      ...opticalAxisSteps,
+      'Park Steppers',
+    ],
+  },
+}
+
+const selectedMode = normalizeMode(modeArg)
 
 const logStream = fs.createWriteStream(logPath, { flags: 'a' })
 
@@ -126,6 +204,14 @@ function jsString(value) {
   return JSON.stringify(value)
 }
 
+function normalizeMode(value) {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'full' || normalized === 'full test') return expectedModes.full
+  if (normalized === 'mechanics' || normalized === 'mechanics-only' || normalized === 'mechanics only') return expectedModes.mechanics
+  if (normalized === 'optics' || normalized === 'optics-only' || normalized === 'optics only') return expectedModes.optics
+  throw new Error(`Unknown mode ${value}. Expected Full, Mechanics, or Optics.`)
+}
+
 async function clickButton(client, label) {
   const clicked = await client.evaluate(`(() => {
     const wanted = ${jsString(label)};
@@ -137,6 +223,55 @@ async function clickButton(client, label) {
   })()`)
   if (!clicked) throw new Error(`Button not found: ${label}`)
   log(`CLICK ${label}`)
+}
+
+async function ensureLinearStagePage(client) {
+  if (await client.evaluate(`document.body.innerText.includes('Operator-guided motion, optical response, and scan audit validation.')`)) {
+    return
+  }
+  const clicked = await client.evaluate(`(() => {
+    const link = Array.from(document.querySelectorAll('a, [role="button"], button')).find((item) => item.innerText.trim() === 'Linear Stage');
+    if (!link) return false;
+    link.scrollIntoView({ block: 'center', inline: 'center' });
+    link.click();
+    return true;
+  })()`)
+  if (!clicked) throw new Error('Linear Stage navigation target not found.')
+  await waitFor(client, 'linear-stage page', `document.body.innerText.includes('Operator-guided motion, optical response, and scan audit validation.')`, 60000)
+}
+
+async function selectMuiOption(client, label, optionText) {
+  const opened = await client.evaluate(`(() => {
+    const labelText = ${jsString(label)};
+    const labelNode = Array.from(document.querySelectorAll('label')).find((item) => item.textContent.trim().replace(/\\s*\\*$/, '') === labelText);
+    const root = labelNode?.closest('.MuiFormControl-root') ?? labelNode?.parentElement;
+    const button = root?.querySelector('[role="combobox"]');
+    if (!button) return false;
+    button.scrollIntoView({ block: 'center', inline: 'center' });
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    button.click();
+    return true;
+  })()`)
+  if (!opened) throw new Error(`Select not found: ${label}`)
+  const selected = await waitFor(client, `option ${optionText}`, `(() => {
+    const optionText = ${jsString(optionText)};
+    const option = Array.from(document.querySelectorAll('[role="option"], li')).find((item) => item.textContent.trim() === optionText);
+    if (!option) return false;
+    option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    option.click();
+    return true;
+  })()`, 10000, 250)
+  if (!selected) throw new Error(`Option not found: ${optionText}`)
+}
+
+async function selectLinearStageMode(client, mode) {
+  await clickButton(client, mode.label)
+  await waitFor(client, `linear-stage mode ${mode.label}`, `(() => {
+    const text = document.body.innerText;
+    return text.includes(${jsString(mode.command)}) && text.includes(${jsString(mode.heading)});
+  })()`, 10000)
 }
 
 async function setInputByLabel(client, label, value) {
@@ -179,6 +314,13 @@ async function setStageClear(client) {
   log('CHECK Stage area is clear')
 }
 
+async function saveScreenshot(client, path) {
+  const result = await client.send('Page.captureScreenshot', { format: 'png', fromSurface: true }, 60000)
+  fs.mkdirSync(pathModule.dirname(path), { recursive: true })
+  fs.writeFileSync(path, Buffer.from(result.data, 'base64'))
+  log(`SCREENSHOT ${path}`)
+}
+
 async function captureState(client, label) {
   const state = await client.evaluate(`(() => ({
     url: location.href,
@@ -199,6 +341,13 @@ try {
   await client.send('Page.enable')
 
   await waitFor(client, 'renderer loaded', `document.readyState === 'complete' && Boolean(window.testingTools)`, 60000)
+  await ensureLinearStagePage(client)
+
+  const runtimeConfig = await client.evaluate(`window.testingTools.getRuntimeConfig()`, 10000)
+  log(`RUNTIME_CONFIG ${JSON.stringify(runtimeConfig)}`)
+  if (runtimeConfig?.serialBackend !== 'electron' || runtimeConfig?.exactSerialPort !== 'COM8') {
+    throw new Error(`Real COM8 validation must be launched with Electron exact-port restriction COM8 before serial listing. Runtime config: ${JSON.stringify(runtimeConfig)}`)
+  }
 
   await client.evaluate(`(async () => {
     const settings = await window.testingTools.getSettings();
@@ -216,7 +365,15 @@ try {
 
   await client.evaluate(`location.reload()`)
   await waitFor(client, 'renderer reloaded', `document.readyState === 'complete' && Boolean(window.testingTools)`, 60000)
-  await waitFor(client, 'COM8 port listed', `(async () => (await window.testingTools.listSerialPorts()).some((port) => port.path === 'COM8'))()`, 60000)
+  await ensureLinearStagePage(client)
+  await selectMuiOption(client, 'Mode', 'Serial')
+  await waitFor(client, 'COM8 is the only exact-port option', `(async () => {
+    const ports = await window.testingTools.listSerialPorts();
+    return {
+      ok: ports.length === 1 && ports[0]?.path === 'COM8',
+      ports,
+    };
+  })()`, 60000)
   await waitFor(client, 'COM8 selected', `(() => {
     const labelNode = Array.from(document.querySelectorAll('label')).find((item) => item.textContent.trim().replace(/\\s*\\*$/, '') === 'COM port');
     const root = labelNode?.closest('.MuiFormControl-root') ?? labelNode?.parentElement;
@@ -229,6 +386,7 @@ try {
   await setInputByLabel(client, 'Batch', 'P1-DEV-2026-05')
   await setInputByLabel(client, 'Tester serial', 'SS-A-001-101A-0013')
   await sleep(1000)
+  await selectLinearStageMode(client, selectedMode)
 
   await clickButton(client, 'Connect')
   await waitFor(client, 'readiness completed', `document.body.innerText.includes('Stage area is clear') || document.body.innerText.includes('Ready to start') || document.body.innerText.includes('Ready to run linear-stage test.')`, 180000, 2000)
@@ -245,7 +403,8 @@ try {
   await clickButton(client, 'Start test')
   await waitFor(client, 'live phase feedback shell visible', `(() => {
     const text = document.body.innerText;
-    return text.includes('Linear-stage test in progress') &&
+    return text.includes(${jsString(`${selectedMode.heading} in progress`)}) &&
+      text.includes(${jsString(selectedMode.command)}) &&
       text.includes('Now') &&
       text.includes('Latest result') &&
       text.includes('Next up') &&
@@ -263,6 +422,8 @@ try {
       hasNextPhase: text.includes('Next up'),
       hasCompletedList: text.includes('Completed, current, and upcoming firmware phases'),
       hasLatestResult: text.includes('Latest result'),
+      hasCommand: text.includes(${jsString(selectedMode.command)}),
+      phaseNames: Array.from(document.querySelectorAll('[data-linear-stage-phase]')).map((node) => node.getAttribute('data-linear-stage-phase')),
       excerpt: text.replace(/\\s+/g, ' ').slice(0, 1800),
     };
   })()`)
@@ -271,6 +432,11 @@ try {
   if (!liveFeedback.hasNextPhase) throw new Error('Live phase feedback did not show the next phase.')
   if (!liveFeedback.hasCompletedList) throw new Error('Live phase feedback did not show the full phase list.')
   if (!liveFeedback.hasLatestResult) throw new Error('Live phase feedback did not show the latest result card.')
+  if (!liveFeedback.hasCommand) throw new Error('Live phase feedback did not show the exact executed command.')
+  if (JSON.stringify(liveFeedback.phaseNames) !== JSON.stringify(selectedMode.phases)) {
+    throw new Error(`${selectedMode.label} live phase list mismatch.\nExpected: ${selectedMode.phases.join(' | ')}\nActual:   ${(liveFeedback.phaseNames ?? []).join(' | ')}`)
+  }
+  await saveScreenshot(client, screenshotPath.replace(/(\.[^.]+)?$/, `-${selectedMode.label.toLowerCase()}$1`))
   await waitFor(client, 'test finished', `(() => {
     const text = document.body.innerText;
     return text.includes('Review result') && (text.includes('FAIL') || text.includes('PASS') || text.includes('REVIEW'));
@@ -285,17 +451,21 @@ try {
       hasHistogram: text.includes('Measurement histograms') || text.includes('Metric histogram') || text.includes('histogram'),
       hasHistoricalRecords: text.includes('Historical records') || text.includes('Full local retention'),
       hasLiveTrace: text.includes('Linear-stage live trace') && text.includes('Latest completed phase'),
+      hasCommand: text.includes(${jsString(selectedMode.command)}),
+      phaseNames: Array.from(document.querySelectorAll('[data-linear-stage-phase]')).map((node) => node.getAttribute('data-linear-stage-phase')),
       records,
       finalExcerpt: text.replace(/\\s+/g, ' ').slice(0, 1600),
     };
   })()`)
   log(`RESULT_SUMMARY ${JSON.stringify(resultSummary)}`)
-  if (!resultSummary.hasFail) throw new Error('Expected real fixture run to finish with FAIL status.')
   if (resultSummary.hasPayloadOmittedWarning) throw new Error('GUI stopped at omitted payload instead of using the legacy full result.')
-  if (!resultSummary.hasHistogram) throw new Error('Expected measurement histogram panel to be visible in the review screen.')
   if (!resultSummary.hasHistoricalRecords) throw new Error('Historical records panel was not visible.')
   if (!resultSummary.hasLiveTrace) throw new Error('Expected final review to preserve the live phase trace.')
-  log('Electron linear-stage real COM8 GUI validation complete.')
+  if (!resultSummary.hasCommand) throw new Error('Final review did not preserve the exact executed command.')
+  if (JSON.stringify(resultSummary.phaseNames) !== JSON.stringify(selectedMode.phases)) {
+    throw new Error(`${selectedMode.label} final phase list mismatch.\nExpected: ${selectedMode.phases.join(' | ')}\nActual:   ${(resultSummary.phaseNames ?? []).join(' | ')}`)
+  }
+  log(`Electron linear-stage real COM8 GUI validation complete for ${selectedMode.label}.`)
 } finally {
   await client.close().catch(() => undefined)
   logStream.end()

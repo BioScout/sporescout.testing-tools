@@ -359,11 +359,14 @@ export function LinearStagePage() {
   const selectedLinearCommand = normalizeLinearStageCommand(linearCommand)
   const readinessReady = readiness.every((item) => item.status === 'passed')
   const canStartTest = connected && connectedMode === mode && Boolean(selectedLinearCommand) && operatorValid && batchValid && testerSerialValid && stageClear && readinessReady && !runProgress?.active
+  const runControlsLocked = Boolean(runProgress?.active) || currentStep === 'review'
 
   const activeSteps = useMemo(() => buildProgressSteps(currentStep, runSummary?.status), [currentStep, runSummary?.status])
   const visibleHistory = historicalRecords
   const liveCompletedCount = liveRun?.steps.filter((step) => step.status === 'pass' || step.status === 'warn' || step.status === 'fail').length ?? 0
   const liveCurrentStep = liveRun?.steps.find((step) => step.status === 'running')
+  const failedStepCount = runSummary?.steps.filter((step) => step.result === 'Fail').length ?? liveRun?.steps.filter((step) => step.status === 'fail').length ?? 0
+  const warningStepCount = runSummary?.steps.filter((step) => step.result === 'Warn').length ?? liveRun?.steps.filter((step) => step.status === 'warn').length ?? 0
 
   useEffect(() => {
     liveRunRef.current = liveRun
@@ -454,6 +457,10 @@ export function LinearStagePage() {
   }, [stageClear])
 
   async function connectTester() {
+    if (runControlsLocked) {
+      setFaultText('Finish the current linear-stage run review before reconnecting the tester.')
+      return
+    }
     if (mode === 'serial' && !serialAvailable) {
       setFaultText('Serial hardware access is only available in the Electron app. Browser preview is mock-only.')
       setDeviceStatus('Fault')
@@ -756,6 +763,10 @@ export function LinearStagePage() {
   }
 
   async function handleModeChange(nextMode: ConnectionMode) {
+    if (runControlsLocked) {
+      setFaultText('Finish the current linear-stage run review before changing the connection mode.')
+      return
+    }
     if (nextMode === mode) return
     if (nextMode === 'serial' && !serialAvailable) {
       setFaultText('Serial hardware access is only available in the Electron app. Browser preview is mock-only.')
@@ -771,6 +782,10 @@ export function LinearStagePage() {
   }
 
   function handleLinearStageModeChange(nextMode: LinearStageMode) {
+    if (runControlsLocked) {
+      setFaultText('Finish the current linear-stage run review before changing test mode.')
+      return
+    }
     if (nextMode === linearStageMode) return
     setLinearStageMode(nextMode)
     setLinearCommand(commandForLinearStageMode(nextMode))
@@ -792,6 +807,10 @@ export function LinearStagePage() {
   }
 
   async function handlePortChange(nextPort: string) {
+    if (runControlsLocked) {
+      setFaultText('Finish the current linear-stage run review before changing the COM port.')
+      return
+    }
     setSelectedPort(nextPort)
     if (!connected) return
     setConnected(false)
@@ -945,6 +964,7 @@ export function LinearStagePage() {
               error={!operatorValid}
               errorMessage={operator.trim() ? 'Press Enter to save this operator before testing.' : 'Operator is required.'}
               info="Required for every run. Select your name, or type a new name and press Enter."
+              disabled={runControlsLocked}
               onValueChange={setOperator}
               onCommit={(value) => addSettingOption('operators', value)}
             />
@@ -956,6 +976,7 @@ export function LinearStagePage() {
               error={!batchValid}
               errorMessage={batch.trim() ? 'Press Enter to save this batch before testing.' : 'Batch is required.'}
               info="Batch is stored with the local record for this test. Type a new batch and press Enter to save it as the default."
+              disabled={runControlsLocked}
               onValueChange={setBatch}
               onCommit={updateBatch}
             />
@@ -967,6 +988,7 @@ export function LinearStagePage() {
               error={!testerSerialValid}
               errorMessage="Expected format: SS-A-001-XXX-YYYY."
               info="Serial for the complete tester/electronics assembly. Type a replacement tester serial and press Enter to save it."
+              disabled={runControlsLocked}
               onValueChange={setTesterDeviceSerial}
               onCommit={updateTesterSerial}
             />
@@ -984,7 +1006,7 @@ export function LinearStagePage() {
             }}
           >
             <Tooltip title={serialAvailable ? 'Use Serial for a real tester over USB. Mock runs the workflow without hardware.' : 'Browser preview is mock-only. Use the Electron app for real serial hardware.'}>
-              <FormControl size="small" fullWidth>
+              <FormControl size="small" fullWidth disabled={runControlsLocked}>
                 <InputLabel>Mode</InputLabel>
                 <Select label="Mode" value={mode} onChange={(event) => void handleModeChange(event.target.value as ConnectionMode)}>
                   <MenuItem value="mock">Mock</MenuItem>
@@ -993,7 +1015,7 @@ export function LinearStagePage() {
               </FormControl>
             </Tooltip>
             <Tooltip title={serialAvailable ? 'Select the USB serial connection for the tester.' : 'Real serial ports are disabled in browser preview.'}>
-              <FormControl size="small" fullWidth disabled={mode === 'mock' || !serialAvailable}>
+              <FormControl size="small" fullWidth disabled={mode === 'mock' || !serialAvailable || runControlsLocked}>
                 <InputLabel>COM port</InputLabel>
                 <Select label="COM port" value={selectedPort} onChange={(event) => void handlePortChange(event.target.value)}>
                   {ports.map((port) => (
@@ -1004,7 +1026,7 @@ export function LinearStagePage() {
                 </Select>
               </FormControl>
             </Tooltip>
-            <Button variant="contained" startIcon={<UsbIcon />} onClick={connectTester} sx={{ width: '100%' }}>
+            <Button variant="contained" startIcon={<UsbIcon />} onClick={connectTester} disabled={runControlsLocked} sx={{ width: '100%' }}>
               Connect
             </Button>
             <Tooltip title="Engineering">
@@ -1061,7 +1083,7 @@ export function LinearStagePage() {
             <DetailRow label="Tester" value={testerDeviceSerial || 'Required'} />
             <LinearStageModeSelector
               mode={linearStageMode}
-              disabled={Boolean(runProgress?.active)}
+              disabled={runControlsLocked}
               onModeChange={handleLinearStageModeChange}
             />
             <DetailRow label="Mode" value={selectedModeConfig.shortLabel} />
@@ -1071,8 +1093,8 @@ export function LinearStagePage() {
             <LinearResultLine summary={runSummary} />
             <DetailRow label="Live progress" value={liveRun ? `${liveCompletedCount}/${liveRun.steps.length}` : '-'} />
             <DetailRow label="Current step" value={liveCurrentStep ? `${liveCurrentStep.number}. ${liveCurrentStep.name}` : '-'} />
-            <DetailRow label="Failed steps" value={String(runSummary?.steps.filter((step) => step.result === 'Fail').length ?? 0)} />
-            <DetailRow label="Warnings" value={String(runSummary?.steps.filter((step) => step.result === 'Warn').length ?? 0)} />
+            <DetailRow label="Failed steps" value={String(failedStepCount)} />
+            <DetailRow label="Warnings" value={String(warningStepCount)} />
             <DetailRow label="Metrics" value={String(runSummary?.metrics.length ?? 0)} />
           </Stack>
         </Paper>
@@ -1322,6 +1344,7 @@ function EditableConfigField(props: {
   required?: boolean
   error?: boolean
   errorMessage?: string
+  disabled?: boolean
 }) {
   const commit = () => {
     const trimmedValue = props.value.trim()
@@ -1336,6 +1359,7 @@ function EditableConfigField(props: {
       options={props.options}
       value={props.value}
       inputValue={props.value}
+      disabled={props.disabled}
       onChange={(_event, value) => {
         const nextValue = value ?? ''
         props.onValueChange(nextValue)
@@ -2395,7 +2419,7 @@ function liveRunFromSummary(summary: LinearStageSummary, previous: LiveLinearSta
     active: false,
     overallStatus: summary.status,
     metadata: [`Final result: ${statusLabel(summary.status)}`, ...(previous?.metadata ?? [])].slice(0, 30),
-    artifacts: previous?.artifacts ?? extractArtifactLines(asRecord(summary.raw).artifacts),
+    artifacts: mergeArtifactLines(previous?.artifacts ?? [], extractArtifactLines(asRecord(summary.raw).artifacts)),
     steps: summary.steps.map((step) => ({
       number: step.number,
       name: step.name,

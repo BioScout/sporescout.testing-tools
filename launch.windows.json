@@ -26,6 +26,7 @@
     "owner": "BioScout",
     "repo": "sporescout.testing-tools",
     "workflowRunsApi": "https://api.github.com/repos/BioScout/sporescout.testing-tools/actions/workflows/release.yml/runs?status=success&per_page=20",
+    "workflowRunsApiTemplate": "https://api.github.com/repos/BioScout/sporescout.testing-tools/actions/workflows/release.yml/runs?status=success&head_sha={commit}&per_page=100",
     "artifactNamePatterns": [
       "sporescout-testing-tools-portable*"
     ],

@@ -46,6 +46,7 @@ Useful launcher checks:
 
 ```powershell
 .\scripts\launch-windows.ps1 -DryRun
+.\scripts\launch-windows.ps1 -VerifyDownloadAvailability
 .\scripts\launch-windows.ps1 -Dev -DryRun
 .\scripts\launch-windows.ps1 -NoDownload -DryRun
 ```
