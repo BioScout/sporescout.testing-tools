@@ -33,6 +33,7 @@
 - Clean-clone launcher downloads must stay pinned to the checked-out code: exact-tag release first, then a successful Actions artifact whose `head_sha` matches `HEAD`.
 - Current request adds a cartridge tester handoff: validate and commit the local cartridge GUI changes, push the branch, and verify a matching Release workflow artifact so a fresh Windows clone can run the GUI without installing developer dependencies.
 - Latest local cartridge handoff validation passed: `npm run typecheck`, `npm test` 38/38, `npm run dist:portable`, launcher dry-run, and render-only packaged Electron smoke with a fake exact-port value. The smoke must remain render-only unless an exact approved serial port is supplied in the current thread.
+- Commit `cc54169` is pushed and has verified Release workflow artifact `sporescout-testing-tools-portable` from run `25699897362`. SS-A-001-101A-0112 is flashed with M-SoM firmware `9003003`; cartridge readiness returned READY.
 
 ## Required Validation
 

@@ -177,3 +177,5 @@
   - `npm run dist:portable` produced `release\SporeScout Testing Tools-0.1.0-x64-portable.exe`.
   - `.\scripts\launch-windows.ps1 -DryRun` resolved the packaged portable EXE.
   - Render-only packaged Electron smoke passed via `verification\electron-cartridge-mock-cdp.mjs` with `SPORESCOUT_TESTING_TOOLS_EXACT_PORT=NO_REAL_PORT_FOR_RENDER_SMOKE`; this smoke intentionally does not click Connect or open serial.
+- 2026-05-12: Testing Tools commit `cc54169` was pushed. GitHub Actions Release workflow run `25699897362` completed successfully, and `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`.
+- 2026-05-12: Approved target SS-A-001-101A-0112 was flashed with M-SoM firmware `9003003` from the paired firmware branch. Runtime proof and cartridge readiness passed through Particle before user GUI trial instructions were prepared.
