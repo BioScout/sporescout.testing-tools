@@ -46,6 +46,83 @@ function Find-PortableApp {
   return $null
 }
 
+function Get-PortableMetadataPath {
+  param([IO.FileInfo]$PortableApp)
+
+  return "$($PortableApp.FullName).sporescout-launch.json"
+}
+
+function Read-PortableMetadata {
+  param([IO.FileInfo]$PortableApp)
+
+  $metadataPath = Get-PortableMetadataPath -PortableApp $PortableApp
+  if (!(Test-Path -LiteralPath $metadataPath)) {
+    return $null
+  }
+
+  try {
+    return Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+  } catch {
+    Write-Host "Ignoring unreadable portable metadata: $metadataPath" -ForegroundColor Yellow
+    return $null
+  }
+}
+
+function Write-PortableMetadata {
+  param([IO.FileInfo]$PortableApp, $CheckoutInfo, [string]$Source, $SourceMetadata)
+
+  $commit = if ($CheckoutInfo) { $CheckoutInfo.Commit } else { $null }
+  $shortCommit = if ($CheckoutInfo) { $CheckoutInfo.ShortCommit } else { $null }
+  $branch = if ($CheckoutInfo) { $CheckoutInfo.Branch } else { $null }
+  $tag = if ($CheckoutInfo) { $CheckoutInfo.Tag } else { $null }
+  $runId = if ($SourceMetadata -and $SourceMetadata.Run) { $SourceMetadata.Run.id } else { $null }
+  $artifactName = if ($SourceMetadata -and $SourceMetadata.Artifact) { $SourceMetadata.Artifact.name } else { $null }
+  $releaseTag = if ($SourceMetadata -and $SourceMetadata.Release) { $SourceMetadata.Release.tag_name } else { $null }
+  $assetName = if ($SourceMetadata -and $SourceMetadata.Asset) { $SourceMetadata.Asset.name } else { $null }
+
+  $metadata = [pscustomobject]@{
+    generated_at = (Get-Date).ToUniversalTime().ToString('o')
+    source = $Source
+    commit = $commit
+    short_commit = $shortCommit
+    branch = $branch
+    tag = $tag
+    run_id = $runId
+    artifact = $artifactName
+    release = $releaseTag
+    asset = $assetName
+  }
+
+  $metadataPath = Get-PortableMetadataPath -PortableApp $PortableApp
+  $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
+}
+
+function Test-PortableMatchesCheckout {
+  param([IO.FileInfo]$PortableApp, $CheckoutInfo)
+
+  if ($null -eq $PortableApp -or $null -eq $CheckoutInfo -or [string]::IsNullOrWhiteSpace($CheckoutInfo.Commit)) {
+    return $true
+  }
+
+  $metadata = Read-PortableMetadata -PortableApp $PortableApp
+  if ($null -eq $metadata -or [string]::IsNullOrWhiteSpace($metadata.commit)) {
+    Write-Host "Local packaged app has no checkout metadata; checking for a portable artifact for $($CheckoutInfo.ShortCommit)..."
+    return $false
+  }
+
+  if ([string]$metadata.commit -ne [string]$CheckoutInfo.Commit) {
+    $metadataCommit = [string]$metadata.commit
+    $metadataShortCommit = [string]$metadata.short_commit
+    if ([string]::IsNullOrWhiteSpace($metadataShortCommit)) {
+      $metadataShortCommit = $metadataCommit.Substring(0, [Math]::Min(12, $metadataCommit.Length))
+    }
+    Write-Host "Local packaged app was built for $metadataShortCommit; current checkout is $($CheckoutInfo.ShortCommit)."
+    return $false
+  }
+
+  return $true
+}
+
 function Find-BundledNode {
   param([string]$Root, $Manifest)
 
@@ -286,7 +363,9 @@ function Download-PortableApp {
   Invoke-WebRequest -Uri $asset.url -Headers $downloadHeaders -OutFile $temporaryPath
   Move-Item -LiteralPath $temporaryPath -Destination $destinationPath -Force
 
-  return Get-Item -LiteralPath $destinationPath
+  $portable = Get-Item -LiteralPath $destinationPath
+  Write-PortableMetadata -PortableApp $portable -CheckoutInfo $CheckoutInfo -Source 'github-release' -SourceMetadata $metadata
+  return $portable
 }
 
 function Find-ArtifactAsset {
@@ -357,6 +436,7 @@ function Download-PortableArtifact {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
     $portable = Copy-FirstPortableFromArchive -ExtractedDirectory $extractPath -DestinationDirectory $destinationDirectory -DownloadConfig $DownloadConfig
     if ($portable) {
+      Write-PortableMetadata -PortableApp $portable -CheckoutInfo $CheckoutInfo -Source 'github-actions-artifact' -SourceMetadata $metadata
       return $portable
     }
   } finally {
@@ -482,6 +562,14 @@ $root = Resolve-Root
 $manifest = Read-Manifest -Root $root -Path $ManifestPath
 $checkoutInfo = Get-GitCheckoutInfo -Root $root
 $portableApp = if ($Dev -or $VerifyDownloadAvailability) { $null } else { Find-PortableApp -Root $root -Manifest $manifest }
+$localPortableApp = $portableApp
+$localPortableIsCurrent = $true
+if (!$Dev -and !$VerifyDownloadAvailability -and $portableApp) {
+  $localPortableIsCurrent = Test-PortableMatchesCheckout -PortableApp $portableApp -CheckoutInfo $checkoutInfo
+  if (!$localPortableIsCurrent -and !$NoDownload) {
+    $portableApp = $null
+  }
+}
 
 if (!$Dev -and !$NoDownload -and $VerifyDownloadAvailability) {
   if (Test-DownloadAvailability -Manifest $manifest -CheckoutInfo $checkoutInfo) {
@@ -493,7 +581,11 @@ if (!$Dev -and !$NoDownload -and $VerifyDownloadAvailability) {
 
 if (!$Dev -and !$portableApp -and !$NoDownload -and $manifest.releaseDownload) {
   if ($DryRun) {
-    Write-Host "No packaged app was found locally. The launcher would first try a portable GitHub release only when HEAD is an exact tag:"
+    if ($localPortableApp -and !$localPortableIsCurrent) {
+      Write-Host "The local packaged app does not match this checkout. The launcher would refresh it from GitHub."
+    } else {
+      Write-Host "No packaged app was found locally. The launcher would first try a portable GitHub release only when HEAD is an exact tag:"
+    }
     Write-Host "  $($manifest.releaseDownload.owner)/$($manifest.releaseDownload.repo)"
     if ($manifest.artifactDownload) {
       $commitLabel = if ($null -ne $checkoutInfo -and ![string]::IsNullOrWhiteSpace($checkoutInfo.ShortCommit)) { $checkoutInfo.ShortCommit } else { '<unknown commit>' }
@@ -517,6 +609,11 @@ if (!$Dev -and !$portableApp -and !$NoDownload -and $manifest.artifactDownload) 
   } catch {
     Write-Host "Portable workflow artifact download failed: $($_.Exception.Message)" -ForegroundColor Yellow
   }
+}
+
+if (!$portableApp -and $localPortableApp) {
+  Write-Host "Using existing local packaged app because no matching download was available." -ForegroundColor Yellow
+  $portableApp = $localPortableApp
 }
 
 if ($portableApp) {
