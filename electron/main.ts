@@ -477,7 +477,7 @@ function emitSerialLine(line: string, generation?: number): void {
   if (parsed.kind === 'gui-event' && parsed.envelope?.type === 'event') {
     const event = parsed.envelope as GuiEventEnvelope
     try {
-      store.saveMirroredEvent(mirroredEventRecordFromEnvelope(event, trimmed, activeRunContext))
+      store.saveMirroredEvent(mirroredEventRecordFromEnvelope(event, trimmed, activeRunContext, app.getVersion()))
     } catch (error) {
       emitSerialLine(`Local storage event write failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     }

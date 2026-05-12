@@ -167,9 +167,9 @@ export class LocalStorageStore {
     const insertResult = this.db
       .prepare(
         `INSERT OR IGNORE INTO mirrored_events
-          (id, event_name, data_json, record_json, run_uid, cartridge_serial, workflow, linear_stage_run_id, linear_stage_mode, created_at, upload_status)
+          (id, event_name, data_json, record_json, run_uid, cartridge_serial, workflow, linear_stage_run_id, linear_stage_mode, app_version, created_at, upload_status)
          VALUES
-          (@id, @event_name, @data_json, @record_json, @run_uid, @cartridge_serial, @workflow, @linear_stage_run_id, @linear_stage_mode, @created_at, @upload_status)`,
+          (@id, @event_name, @data_json, @record_json, @run_uid, @cartridge_serial, @workflow, @linear_stage_run_id, @linear_stage_mode, @app_version, @created_at, @upload_status)`,
       )
       .run({
         id: eventId,
@@ -181,6 +181,7 @@ export class LocalStorageStore {
         workflow: pendingRecord.workflow ?? null,
         linear_stage_run_id: pendingRecord.linear_stage_run_id ?? null,
         linear_stage_mode: pendingRecord.linear_stage_mode ?? null,
+        app_version: pendingRecord.app_version ?? null,
         created_at: pendingRecord.local_timestamp,
         upload_status: pendingRecord.upload_status,
       })
@@ -410,7 +411,18 @@ export class LocalStorageStore {
 
     const eventWhere: string[] = []
     const eventParams: Record<string, unknown> = { limit, offset }
-    if (workflow) {
+    if (workflow === 'cartridge_subassembly') {
+      eventWhere.push(`(
+        workflow = @workflow
+        OR event_name = 'dd_cartridge_air_leak_summary'
+        OR data_json LIKE '%CARTRIDGE_SUBASSEMBLY%'
+        OR record_json LIKE '%CARTRIDGE_SUBASSEMBLY%'
+        OR data_json LIKE '%cartridge_leak%'
+        OR record_json LIKE '%cartridge_leak%'
+        OR (event_name = 'dd_test_step_result' AND (data_json LIKE '%"cartridge_serial"%' OR record_json LIKE '%"cartridge_serial"%'))
+      )`)
+      eventParams.workflow = workflow
+    } else if (workflow) {
       eventWhere.push('(workflow = @workflow OR record_json LIKE @workflowPattern OR data_json LIKE @workflowPattern OR event_name LIKE @workflowPattern)')
       eventParams.workflow = workflow
       eventParams.workflowPattern = `%${workflow}%`
@@ -437,7 +449,7 @@ export class LocalStorageStore {
 
     const events = (this.db
       .prepare(
-        `SELECT id, event_name, record_json, run_uid, cartridge_serial, workflow, linear_stage_run_id, linear_stage_mode, created_at, upload_status
+        `SELECT id, event_name, record_json, run_uid, cartridge_serial, workflow, linear_stage_run_id, linear_stage_mode, app_version, created_at, upload_status
          FROM mirrored_events
          ${eventWhere.length ? `WHERE ${eventWhere.join(' AND ')}` : ''}
          ORDER BY created_at DESC
@@ -452,6 +464,7 @@ export class LocalStorageStore {
       workflow: string | null
       linear_stage_run_id: string | null
       linear_stage_mode: MirroredEventRecord['linear_stage_mode'] | null
+      app_version: string | null
       created_at: string
       upload_status: MirroredEventRecord['upload_status']
     }>).map((row) => ({
@@ -468,6 +481,7 @@ export class LocalStorageStore {
         workflow: row.workflow ?? undefined,
         linear_stage_run_id: row.linear_stage_run_id ?? undefined,
         linear_stage_mode: row.linear_stage_mode ?? undefined,
+        app_version: row.app_version ?? undefined,
         upload_status: row.upload_status,
       }) as MirroredEventRecord,
       run_uid: row.run_uid ?? undefined,
@@ -475,6 +489,7 @@ export class LocalStorageStore {
       workflow: row.workflow ?? undefined,
       linear_stage_run_id: row.linear_stage_run_id ?? undefined,
       linear_stage_mode: row.linear_stage_mode ?? undefined,
+      app_version: row.app_version ?? undefined,
       created_at: row.created_at,
       upload_status: row.upload_status,
     }))
@@ -562,6 +577,7 @@ export class LocalStorageStore {
         workflow TEXT,
         linear_stage_run_id TEXT,
         linear_stage_mode TEXT,
+        app_version TEXT,
         created_at TEXT NOT NULL,
         upload_status TEXT NOT NULL
       );
@@ -603,6 +619,7 @@ export class LocalStorageStore {
     this.ensureColumn('mirrored_events', 'workflow', 'TEXT')
     this.ensureColumn('mirrored_events', 'linear_stage_run_id', 'TEXT')
     this.ensureColumn('mirrored_events', 'linear_stage_mode', 'TEXT')
+    this.ensureColumn('mirrored_events', 'app_version', 'TEXT')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_commands_run ON commands(run_uid);
@@ -613,6 +630,7 @@ export class LocalStorageStore {
       CREATE INDEX IF NOT EXISTS idx_events_workflow ON mirrored_events(workflow);
       CREATE INDEX IF NOT EXISTS idx_events_linear_run ON mirrored_events(linear_stage_run_id);
       CREATE INDEX IF NOT EXISTS idx_events_linear_mode ON mirrored_events(linear_stage_mode);
+      CREATE INDEX IF NOT EXISTS idx_events_app_version ON mirrored_events(app_version);
       CREATE INDEX IF NOT EXISTS idx_overrides_created_at ON overrides(created_at);
     `)
   }
@@ -684,5 +702,5 @@ function clampHistoryLimit(limit?: number): number {
   if (typeof limit !== 'number' || !Number.isFinite(limit)) {
     return 500
   }
-  return Math.min(2000, Math.max(25, Math.trunc(limit)))
+  return Math.min(10000, Math.max(25, Math.trunc(limit)))
 }

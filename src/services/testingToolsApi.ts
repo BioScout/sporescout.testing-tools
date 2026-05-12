@@ -30,6 +30,8 @@ import {
 } from '../shared/contracts'
 import { formatGuiEvent, formatGuiResponse, mirroredEventRecordFromEnvelope, parseSerialLine } from '../shared/serialParser'
 
+declare const __SPORESCOUT_APP_VERSION__: string
+
 const BROWSER_SERIAL_CHOOSE_PATH = 'WEB_SERIAL_REQUEST'
 const BROWSER_SERIAL_GRANTED_PREFIX = 'WEB_SERIAL_GRANTED_'
 const DEFAULT_BAUD_RATE = 115200
@@ -39,6 +41,7 @@ const OVERSIZED_RESPONSE_LEGACY_GRACE_MS = 120_000
 const BROWSER_SETTINGS_KEY = 'sporescout.testing-tools.stationSettings'
 const BROWSER_HISTORY_KEY = 'sporescout.testing-tools.history'
 const BROWSER_ACTIVE_CONTEXT_KEY = 'sporescout.testing-tools.activeRunContext'
+const BROWSER_APP_VERSION = __SPORESCOUT_APP_VERSION__
 
 type BrowserSerialPortInfo = {
   usbVendorId?: number
@@ -150,7 +153,7 @@ const browserApi: TestingToolsApi = {
     return { ok: true }
   },
   async getRuntimeConfig() {
-    return { serialBackend: 'browser', appVersion: '0.14.0' }
+    return { serialBackend: 'browser', appVersion: BROWSER_APP_VERSION }
   },
   async sendCommand(command: string) {
     if (command.trim() === 'solenoid Lock') {
@@ -781,7 +784,7 @@ function filterBrowserHistory(query: HistoricalRecordsQuery = {}): HistoricalRec
     ) {
       return false
     }
-    if (workflowFilter && !JSON.stringify(event).toLowerCase().includes(workflowFilter.toLowerCase())) {
+    if (workflowFilter && !browserEventMatchesWorkflow(event, workflowFilter)) {
       return false
     }
     if (textFilter && !JSON.stringify(event).toLowerCase().includes(textFilter)) {
@@ -799,6 +802,20 @@ function filterBrowserHistory(query: HistoricalRecordsQuery = {}): HistoricalRec
     events: events.slice(offset, offset + limit),
     overrides: overrides.slice(offset, offset + limit),
   }
+}
+
+function browserEventMatchesWorkflow(event: StoredMirroredEventRecord, workflow: string): boolean {
+  const normalizedWorkflow = workflow.toLowerCase()
+  const serialized = JSON.stringify(event).toLowerCase()
+  if (serialized.includes(normalizedWorkflow)) return true
+  if (normalizedWorkflow !== 'cartridge_subassembly') return false
+
+  return (
+    event.event_name === 'dd_cartridge_air_leak_summary' ||
+    serialized.includes('cartridge_subassembly') ||
+    serialized.includes('cartridge_leak') ||
+    (event.event_name === 'dd_test_step_result' && serialized.includes('cartridge_serial'))
+  )
 }
 
 function recordMatchesHistoryQuery(
@@ -820,7 +837,7 @@ function clampHistoryLimit(limit?: number): number {
   if (typeof limit !== 'number' || !Number.isFinite(limit)) {
     return 500
   }
-  return Math.min(2000, Math.max(25, Math.trunc(limit)))
+  return Math.min(10000, Math.max(25, Math.trunc(limit)))
 }
 
 function saveBrowserHistory(): void {
@@ -906,7 +923,7 @@ function recordBrowserResponse(response: GuiResponseEnvelope, rawLine?: string):
 }
 
 function recordBrowserEvent(event: GuiEventEnvelope, rawLine?: string): void {
-  const mirroredRecord = mirroredEventRecordFromEnvelope(event, rawLine, activeRunContext) as MirroredEventRecord
+  const mirroredRecord = mirroredEventRecordFromEnvelope(event, rawLine, activeRunContext, BROWSER_APP_VERSION) as MirroredEventRecord
   const record: StoredMirroredEventRecord = {
     id: mirroredRecord.event_id,
     event_name: event.event_name,
@@ -916,6 +933,7 @@ function recordBrowserEvent(event: GuiEventEnvelope, rawLine?: string): void {
     workflow: mirroredRecord.workflow,
     linear_stage_run_id: mirroredRecord.linear_stage_run_id,
     linear_stage_mode: mirroredRecord.linear_stage_mode,
+    app_version: mirroredRecord.app_version,
     created_at: mirroredRecord.local_timestamp,
     upload_status: mirroredRecord.upload_status,
   }

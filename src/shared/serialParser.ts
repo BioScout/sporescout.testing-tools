@@ -103,6 +103,7 @@ export function mirroredEventRecordFromEnvelope(
   envelope: GuiEventEnvelope,
   rawLine?: string,
   context?: LocalRunContext,
+  appVersion?: string,
 ): MirroredEventRecord {
   const eventContext = asRecord(envelope.data.context)
   const eventRunUid = asOptionalString(envelope.data.run_uid)
@@ -159,6 +160,7 @@ export function mirroredEventRecordFromEnvelope(
     workflow: context?.workflow,
     linear_stage_run_id: linearStageRunId,
     linear_stage_mode: linearStageMode,
+    app_version: appVersion,
     jsonl_status: 'pending',
     upload_status: 'local_only',
   }

@@ -295,6 +295,7 @@ export interface MirroredEventRecord {
   workflow?: string
   linear_stage_run_id?: string
   linear_stage_mode?: LinearStageMode
+  app_version?: string
   jsonl_status?: 'pending' | 'written' | 'write_failed'
   upload_status: 'local_only' | 'queued' | 'uploaded' | 'failed'
 }
@@ -344,6 +345,7 @@ export interface StoredMirroredEventRecord {
   workflow?: string
   linear_stage_run_id?: string
   linear_stage_mode?: LinearStageMode
+  app_version?: string
   created_at: string
   upload_status: MirroredEventRecord['upload_status']
 }

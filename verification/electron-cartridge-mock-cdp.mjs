@@ -115,13 +115,13 @@ await client.connect()
 
 try {
   await client.send('Page.enable')
-  await waitFor(client, 'cartridge page shell', `document.body.innerText.includes('SporeScout Cartridge Subassembly Tester')`)
+  await waitFor(client, 'cartridge page shell', `Boolean(document.body?.innerText.includes('SporeScout Cartridge Subassembly Tester'))`)
 
   await waitFor(client, 'cartridge controls', `(() => {
-    const text = document.body.innerText.toLowerCase();
+    const text = document.body?.innerText.toLowerCase() ?? '';
     return [
       'operator-guided cartridge leak characterization.',
-      'app v0.14',
+      'app v0.15',
       'operator',
       'batch',
       'tester serial',
@@ -131,9 +131,31 @@ try {
       'connect tester',
       'insert cartridge',
       'current run',
-      'historical records',
+      'cartridge history',
     ].every((label) => text.includes(label));
   })()`)
+
+  const expectedHistoryText = (process.env.SPORESCOUT_EXPECT_HISTORY_TEXT ?? '')
+    .split('|')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+  if (expectedHistoryText.length) {
+    await waitFor(client, 'seeded cartridge history rows', `(() => {
+      const text = document.body?.innerText.toLowerCase() ?? '';
+      return ${jsString(expectedHistoryText)}.every((label) => text.includes(label));
+    })()`)
+    await client.evaluate(`(() => {
+      const expected = ${jsString(expectedHistoryText[0] ?? '')};
+      const elements = Array.from(document.querySelectorAll('*'));
+      const target = elements.find((element) =>
+        element.children.length === 0 &&
+        element.textContent?.toLowerCase().includes(expected)
+      ) ?? elements.find((element) => element.textContent?.toLowerCase().includes('cartridge history'));
+      target?.scrollIntoView({ block: 'center' });
+      return Boolean(target);
+    })()`)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
 
   await saveScreenshot(client, screenshotPath)
   const body = await client.evaluate(`document.body.innerText.replace(/\\s+/g, ' ').slice(0, 1200)`)

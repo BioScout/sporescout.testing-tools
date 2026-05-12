@@ -92,6 +92,14 @@ import {
   type WorkflowStepId,
 } from '../../shared/workflow'
 import { getDefaultConnectionMode, getTestingToolsApi } from '../../services/testingToolsApi'
+import {
+  buildCartridgeHistoryRuns,
+  cartridgeHistoryResult,
+  filterCartridgeHistoryRuns,
+  summarizeCartridgeHistory,
+  type CartridgeHistoryResult,
+  type CartridgeHistoryRun,
+} from './cartridgeHistory'
 
 type GuidanceState = {
   guidance?: string
@@ -117,7 +125,7 @@ type RunSnapshot = Required<Pick<
 }
 
 const api = getTestingToolsApi()
-const HISTORY_PAGE_LIMIT = 500
+const HISTORY_PAGE_LIMIT = 10000
 
 export function CartridgeSubassemblyPage() {
   const [settings, setSettings] = useState<StationSettings>(DEFAULT_STATION_SETTINGS)
@@ -1724,6 +1732,25 @@ function HistoricalRecordsPanel(props: {
   onPage: (offset: number) => Promise<void>
   onRefresh: () => Promise<void>
 }) {
+  const [attemptView, setAttemptView] = useState<'all' | 'latest'>('all')
+  const [operatorFilter, setOperatorFilter] = useState('all')
+  const [productionBatchFilter, setProductionBatchFilter] = useState('all')
+  const [appVersionFilter, setAppVersionFilter] = useState('all')
+  const [resultFilter, setResultFilter] = useState<'all' | CartridgeHistoryResult>('all')
+  const allRuns = useMemo(() => buildCartridgeHistoryRuns(props.records.events), [props.records.events])
+  const operatorOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.operator)), [allRuns])
+  const productionBatchOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.productionBatch)), [allRuns])
+  const appVersionOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.appVersion ?? 'unknown')), [allRuns])
+  const filteredRuns = useMemo(() => {
+    return filterCartridgeHistoryRuns(allRuns, {
+      attemptView,
+      operator: operatorFilter,
+      productionBatch: productionBatchFilter,
+      appVersion: appVersionFilter,
+      result: resultFilter,
+    })
+  }, [allRuns, appVersionFilter, attemptView, operatorFilter, productionBatchFilter, resultFilter])
+  const summary = useMemo(() => summarizeCartridgeHistory(filteredRuns), [filteredRuns])
   const sections = [
     {
       title: `Mirrored events (${props.records.events.length})`,
@@ -1749,18 +1776,28 @@ function HistoricalRecordsPanel(props: {
   const hasNext = sections.some((section) => section.records.length >= props.limit)
 
   return (
-    <Accordion disableGutters>
+    <Accordion disableGutters defaultExpanded>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-          <Typography variant="subtitle2">Historical records</Typography>
-          <Chip size="small" label={`${props.records.events.length} events`} />
-          <Chip size="small" label={`${props.records.responses.length} responses`} />
-          <Chip size="small" label={`${props.records.commands.length} commands`} />
+          <Typography variant="subtitle2">Cartridge history</Typography>
+          <Chip size="small" label={`${summary.runCount} runs`} />
+          <Chip size="small" label={`${summary.uniqueCartridgeCount} cartridges`} />
+          <Chip size="small" label={`${summary.resultCounts.accept} accept`} color="success" />
+          <Chip size="small" label={`${summary.resultCounts.borderline} borderline`} color="warning" />
+          <Chip size="small" label={`${summary.resultCounts.suspect} suspect`} color="error" />
+          <Chip size="small" label={`${summary.resultCounts.repeat} repeat`} color="error" />
+          {summary.resultCounts.unknown > 0 && <Chip size="small" label={`${summary.resultCounts.unknown} unknown`} />}
         </Stack>
       </AccordionSummary>
       <AccordionDetails>
         <Stack spacing={1.5}>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }}>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={1}
+            useFlexGap
+            alignItems={{ xs: 'stretch', md: 'center' }}
+            sx={{ flexWrap: 'wrap' }}
+          >
             <Button size="small" startIcon={<RefreshIcon />} onClick={props.onRefresh}>
               Refresh records
             </Button>
@@ -1778,36 +1815,250 @@ function HistoricalRecordsPanel(props: {
               onChange={(event) => props.onCartridgeFilterChange(normalizeCartridgeSerial(event.target.value))}
               sx={{ minWidth: 240 }}
             />
+            <HistorySelect label="Operator" value={operatorFilter} options={operatorOptions} onChange={setOperatorFilter} />
+            <HistorySelect label="Production batch" value={productionBatchFilter} options={productionBatchOptions} onChange={setProductionBatchFilter} />
+            <HistorySelect label="App version" value={appVersionFilter} options={appVersionOptions} onChange={setAppVersionFilter} />
+            <HistorySelect
+              label="Result"
+              value={resultFilter}
+              options={['accept', 'borderline', 'suspect', 'repeat', 'unknown']}
+              onChange={(value) => setResultFilter(value as 'all' | CartridgeHistoryResult)}
+            />
+            <FormControl size="small" sx={{ minWidth: 170 }}>
+              <InputLabel>Attempts</InputLabel>
+              <Select label="Attempts" value={attemptView} onChange={(event) => setAttemptView(event.target.value as 'all' | 'latest')}>
+                <MenuItem value="all">All attempts</MenuItem>
+                <MenuItem value="latest">Latest per cartridge</MenuItem>
+              </Select>
+            </FormControl>
             <Button size="small" disabled={props.offset === 0} onClick={() => props.onPage(props.offset - props.limit)}>
               Previous
             </Button>
             <Button size="small" disabled={!hasNext} onClick={() => props.onPage(props.offset + props.limit)}>
               Next
             </Button>
-            <Typography variant="caption" color="text.secondary">
-              Showing records {props.offset + 1}-{props.offset + props.limit} per section. Full retention remains in SQLite and JSONL:
-              {' '}
-              {props.storageSummary?.jsonlPath ?? 'not loaded'}.
-            </Typography>
           </Stack>
 
-          {sections.map((section) => (
-            <Accordion key={section.title} disableGutters>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="body2">{section.title}</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <LogBlock
-                  lines={section.records.map((record) => JSON.stringify(record, null, 2))}
-                  empty={section.empty}
-                  maxHeight={360}
-                />
-              </AccordionDetails>
-            </Accordion>
-          ))}
+          <HistorySummaryStrip summary={summary} />
+
+          <Typography variant="caption" color="text.secondary">
+            Showing records {props.offset + 1}-{props.offset + props.limit} from the loaded local history window. Production batch is the manufacturing batch field. Full retention remains in SQLite and JSONL: {props.storageSummary?.jsonlPath ?? 'not loaded'}.
+          </Typography>
+
+          <Stack spacing={1}>
+            {filteredRuns.length > 0 ? (
+              filteredRuns.map((run) => <CartridgeHistoryRunRow key={run.id} run={run} />)
+            ) : (
+              <Alert severity="info">No cartridge history matches the current filters.</Alert>
+            )}
+          </Stack>
+
+          <Accordion disableGutters>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+                <Typography variant="body2">Engineering raw records</Typography>
+                <Chip size="small" label={`${props.records.events.length} events`} />
+                <Chip size="small" label={`${props.records.responses.length} responses`} />
+                <Chip size="small" label={`${props.records.commands.length} commands`} />
+              </Stack>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Stack spacing={1}>
+                {sections.map((section) => (
+                  <Accordion key={section.title} disableGutters>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Typography variant="body2">{section.title}</Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <LogBlock
+                        lines={section.records.map((record) => JSON.stringify(record, null, 2))}
+                        empty={section.empty}
+                        maxHeight={360}
+                      />
+                    </AccordionDetails>
+                  </Accordion>
+                ))}
+              </Stack>
+            </AccordionDetails>
+          </Accordion>
         </Stack>
       </AccordionDetails>
     </Accordion>
+  )
+}
+
+function HistorySelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: string[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <FormControl size="small" sx={{ minWidth: 170 }}>
+      <InputLabel>{label}</InputLabel>
+      <Select label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+        <MenuItem value="all">All</MenuItem>
+        {options.map((option) => (
+          <MenuItem key={option} value={option}>{option}</MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  )
+}
+
+function HistorySummaryStrip({ summary }: { summary: ReturnType<typeof summarizeCartridgeHistory> }) {
+  const ratioRange = typeof summary.ratioMin === 'number' && typeof summary.ratioMax === 'number'
+    ? `${summary.ratioMin.toFixed(3)}-${summary.ratioMax.toFixed(3)}`
+    : '-'
+  const metrics = [
+    ['Runs', String(summary.runCount)],
+    ['Cartridges', String(summary.uniqueCartridgeCount)],
+    ['Accept', String(summary.resultCounts.accept)],
+    ['Borderline', String(summary.resultCounts.borderline)],
+    ['Suspect', String(summary.resultCounts.suspect)],
+    ['Repeat results', String(summary.resultCounts.repeat)],
+    ['Unknown', String(summary.resultCounts.unknown)],
+    ['Median ratio', formatNumber(summary.ratioMedian)],
+    ['Ratio range', ratioRange],
+    ['Multi-attempt rows', String(summary.repeatAttemptCount)],
+    ['App versions', summary.appVersions.join(', ') || 'unknown'],
+  ]
+
+  return (
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(5, minmax(0, 1fr))' }, gap: 1 }}>
+      {metrics.map(([label, value]) => (
+        <Box key={label} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1, minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary">{label}</Typography>
+          <Typography variant="body2" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</Typography>
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+function CartridgeHistoryRunRow({ run }: { run: CartridgeHistoryRun }) {
+  const result = cartridgeHistoryResult(run)
+  const resultLabel = historyResultLabel(result)
+  const appVersion = run.appVersion ? `App v${formatDisplayVersion(run.appVersion)}` : 'App unknown'
+  return (
+    <Accordion disableGutters sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, '&:before': { display: 'none' } }}>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ alignItems: 'flex-start', '& .MuiAccordionSummary-content': { minWidth: 0 } }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', lg: 'minmax(240px, 0.9fr) minmax(260px, 1.1fr) minmax(520px, 1.5fr)' },
+            gap: 1.5,
+            width: '100%',
+            minWidth: 0,
+            alignItems: 'start',
+          }}
+        >
+          <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+            <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, flexWrap: 'wrap' }}>
+              {historyResultIcon(result)}
+              <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>
+                {run.cartridgeSerial ?? 'Unknown cartridge'}
+              </Typography>
+              <Chip size="small" label={resultLabel} color={historyResultChipColor(result)} />
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              {formatTimestamp(run.completedAt)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+              {run.operator ?? 'Unknown operator'} | {run.productionBatch ?? 'No production batch'} | {appVersion}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Attempt {run.attemptIndex}/{run.attemptCount} | {run.eventCount} events
+            </Typography>
+          </Stack>
+
+          <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+            <Stack direction="row" justifyContent="space-between" spacing={1}>
+              <Typography variant="caption" color="text.secondary">Sealed/open ratio</Typography>
+              <Typography variant="body2" color={ratioColor(run.sealedOpenRatio)}>
+                {formatNumber(run.sealedOpenRatio)}
+              </Typography>
+            </Stack>
+            <RatioThresholdBar ratio={run.sealedOpenRatio} dense />
+            <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+              Tester {run.testerDeviceSerial ?? '-'} | Nozzle {run.nozzleId ?? '-'} | Seal {run.sealFixtureId ?? '-'}
+            </Typography>
+          </Stack>
+
+          <HistoryMeasurementTable run={run} />
+        </Box>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Stack spacing={1.25}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+            <DetailRow label="Run UID" value={run.runUid ?? '-'} />
+            <DetailRow label="Firmware" value={run.firmwareVersion ? String(run.firmwareVersion) : '-'} />
+            <DetailRow label="Device ID" value={run.deviceId ?? '-'} />
+            <DetailRow label="Enclosure base" value={run.enclosureBaseId ?? '-'} />
+            <DetailRow label="Profile" value={run.profileVersion ?? '-'} />
+            <DetailRow label="Status" value={run.status ?? resultLabel} valueColor={historyResultColor(result)} />
+          </Box>
+          <MeasurementTable measurements={run.measurements as Record<string, MeasurementSummary>} dense />
+          <MeasurementHistograms measurements={run.measurements as Record<string, MeasurementSummary>} guidance={{ guidance: run.guidance, sealedOpenRatio: run.sealedOpenRatio, sampleQuality: run.sampleQuality }} defaultExpanded={false} />
+          <Accordion disableGutters>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="body2">Raw events for this run</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <LogBlock lines={run.rawEvents.map((event) => JSON.stringify(event.record, null, 2))} empty="No raw events for this run." maxHeight={320} />
+            </AccordionDetails>
+          </Accordion>
+        </Stack>
+      </AccordionDetails>
+    </Accordion>
+  )
+}
+
+function HistoryMeasurementTable({ run }: { run: CartridgeHistoryRun }) {
+  const rows: TestPhase[] = ['open', 'nozzle', 'sealed']
+  return (
+    <Box sx={{ minWidth: 0, overflowX: 'auto' }}>
+      <Table size="small" sx={{ minWidth: 520 }}>
+        <TableHead>
+          <TableRow>
+            <TableCell>State</TableCell>
+            <TableCell align="right">Trimmed</TableCell>
+            <TableCell align="right">Min</TableCell>
+            <TableCell align="right">Max</TableCell>
+            <TableCell align="right">CV</TableCell>
+            <TableCell align="center">Quality</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((phase) => {
+            const measurement = run.measurements[phase]
+            return (
+              <TableRow key={phase}>
+                <TableCell sx={{ textTransform: 'capitalize' }}>{phase}</TableCell>
+                <TableCell align="right">{formatNumber(measurement?.slpm)}</TableCell>
+                <TableCell align="right">{formatNumber(measurement?.min_slpm)}</TableCell>
+                <TableCell align="right">{formatNumber(measurement?.max_slpm)}</TableCell>
+                <TableCell align="right">{measurement ? `${(measurement.coefficient_of_variation * 100).toFixed(1)}%` : '-'}</TableCell>
+                <TableCell align="center">
+                  {measurement ? (
+                    <Tooltip title={`Sample quality: ${measurement.sample_quality}`}>
+                      <Box component="span" sx={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+                        <QualityIcon measurement={measurement} />
+                      </Box>
+                    </Tooltip>
+                  ) : '-'}
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </Box>
   )
 }
 
@@ -2208,40 +2459,74 @@ function Metric({ label, value, color }: { label: string; value: string; color?:
   )
 }
 
-function RatioThresholdBar({ ratio }: { ratio?: number }) {
-  const max = Math.max(0.35, typeof ratio === 'number' ? ratio * 1.15 : 0)
-  const valuePct = typeof ratio === 'number' ? clamp((ratio / max) * 100, 0, 100) : undefined
-  const borderlinePct = clamp((0.25 / max) * 100, 0, 100)
-  const suspectPct = clamp((0.28 / max) * 100, 0, 100)
+const RATIO_AXIS_MIN = 0.10
+const RATIO_AXIS_MAX = 0.40
+const RATIO_ACCEPT_MAX = 0.25
+const RATIO_SUSPECT_MIN = 0.28
+
+function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: boolean }) {
+  const range = RATIO_AXIS_MAX - RATIO_AXIS_MIN
+  const valuePct = typeof ratio === 'number' ? clamp(((ratio - RATIO_AXIS_MIN) / range) * 100, 0, 100) : undefined
+  const offScaleLow = typeof ratio === 'number' && ratio < RATIO_AXIS_MIN
+  const offScaleHigh = typeof ratio === 'number' && ratio > RATIO_AXIS_MAX
+  const borderlinePct = clamp(((RATIO_ACCEPT_MAX - RATIO_AXIS_MIN) / range) * 100, 0, 100)
+  const suspectPct = clamp(((RATIO_SUSPECT_MIN - RATIO_AXIS_MIN) / range) * 100, 0, 100)
+  const markerColor = ratioColor(ratio) ?? 'text.secondary'
 
   return (
     <Box>
-      <Box sx={{ position: 'relative', height: 28 }}>
+      <Box sx={{ position: 'relative', height: dense ? 22 : 30 }}>
         <Box sx={{ position: 'absolute', left: 0, right: 0, top: 11, height: 8, bgcolor: 'success.light', borderRadius: 1 }} />
         <Box sx={{ position: 'absolute', left: `${borderlinePct}%`, right: `${100 - suspectPct}%`, top: 11, height: 8, bgcolor: 'warning.light' }} />
         <Box sx={{ position: 'absolute', left: `${suspectPct}%`, right: 0, top: 11, height: 8, bgcolor: 'error.light', borderTopRightRadius: 4, borderBottomRightRadius: 4 }} />
-        <ThresholdMark percent={borderlinePct} label="0.25" />
-        <ThresholdMark percent={suspectPct} label="0.28" />
-        {valuePct !== undefined && (
+        {!dense && <ThresholdMark percent={borderlinePct} label="0.25" />}
+        {!dense && <ThresholdMark percent={suspectPct} label="0.28" />}
+        {valuePct !== undefined && !offScaleLow && !offScaleHigh && (
           <Box
             sx={{
               position: 'absolute',
               left: `${valuePct}%`,
-              top: 3,
+              top: dense ? 5 : 3,
               width: 2,
-              height: 24,
-              bgcolor: ratioColor(ratio),
+              height: dense ? 18 : 24,
+              bgcolor: markerColor,
               transform: 'translateX(-1px)',
             }}
           />
         )}
+        {offScaleLow && <OffScaleRatioArrow side="left" color={markerColor} />}
+        {offScaleHigh && <OffScaleRatioArrow side="right" color={markerColor} />}
       </Box>
-      <Stack direction="row" justifyContent="space-between">
-        <Typography variant="caption" color="success.main">Accept range</Typography>
-        <Typography variant="caption" color="warning.main">Borderline band</Typography>
-        <Typography variant="caption" color="error.main">Suspect band</Typography>
+      <Stack direction="row" justifyContent="space-between" spacing={1}>
+        <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MIN.toFixed(2)}</Typography>
+        {!dense && <Typography variant="caption" color="success.main">Accept range</Typography>}
+        <Typography variant="caption" color="warning.main">{dense ? '0.25 / 0.28' : 'Borderline band'}</Typography>
+        {!dense && <Typography variant="caption" color="error.main">Suspect band</Typography>}
+        <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MAX.toFixed(2)}</Typography>
       </Stack>
     </Box>
+  )
+}
+
+function OffScaleRatioArrow({ side, color }: { side: 'left' | 'right'; color: string }) {
+  return (
+    <Box
+      aria-label={side === 'left' ? 'Ratio is below fixed axis minimum' : 'Ratio is above fixed axis maximum'}
+      sx={{
+        position: 'absolute',
+        left: side === 'left' ? 0 : '100%',
+        top: 5,
+        width: 0,
+        height: 0,
+        transform: side === 'left' ? 'translateX(-1px)' : 'translateX(-9px)',
+        borderTop: '7px solid transparent',
+        borderBottom: '7px solid transparent',
+        borderRight: side === 'left' ? '10px solid' : undefined,
+        borderLeft: side === 'right' ? '10px solid' : undefined,
+        borderRightColor: side === 'left' ? color : undefined,
+        borderLeftColor: side === 'right' ? color : undefined,
+      }}
+    />
   )
 }
 
@@ -2259,16 +2544,18 @@ function ThresholdMark({ percent, label }: { percent: number; label: string }) {
 function MeasurementHistograms({
   measurements,
   guidance,
+  defaultExpanded = true,
 }: {
   measurements: Record<string, MeasurementSummary>
   guidance: GuidanceState
+  defaultExpanded?: boolean
 }) {
   const rows: TestPhase[] = ['open', 'nozzle', 'sealed']
   const hasSamples = rows.some((phase) => (measurements[phase]?.flow_slpm_samples?.length ?? 0) > 0)
   if (!hasSamples && typeof guidance.sealedOpenRatio !== 'number') return null
 
   return (
-    <Accordion disableGutters defaultExpanded>
+    <Accordion disableGutters defaultExpanded={defaultExpanded}>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="subtitle2">Measurement distribution</Typography>
@@ -2629,8 +2916,61 @@ function ratioColor(ratio?: number): string | undefined {
   return 'error.main'
 }
 
+function historyResultLabel(result: CartridgeHistoryResult): string {
+  switch (result) {
+    case 'accept':
+      return 'Accept'
+    case 'borderline':
+      return 'Borderline'
+    case 'suspect':
+      return 'Suspect'
+    case 'repeat':
+      return 'Repeat'
+    default:
+      return 'Unknown'
+  }
+}
+
+function historyResultIcon(result: CartridgeHistoryResult) {
+  if (result === 'accept') return <CheckCircleIcon color="success" fontSize="small" />
+  if (result === 'suspect' || result === 'repeat') return <ErrorOutlineIcon color="error" fontSize="small" />
+  if (result === 'borderline') return <WarningAmberIcon color="warning" fontSize="small" />
+  return <InfoOutlinedIcon color="disabled" fontSize="small" />
+}
+
+function historyResultChipColor(result: CartridgeHistoryResult): 'default' | 'success' | 'warning' | 'error' {
+  if (result === 'accept') return 'success'
+  if (result === 'borderline') return 'warning'
+  if (result === 'suspect' || result === 'repeat') return 'error'
+  return 'default'
+}
+
+function historyResultColor(result: CartridgeHistoryResult): string {
+  if (result === 'accept') return 'success.main'
+  if (result === 'borderline') return 'warning.main'
+  if (result === 'suspect' || result === 'repeat') return 'error.main'
+  return 'text.primary'
+}
+
 function formatNumber(value?: number, digits = 3): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '-'
+}
+
+function formatTimestamp(value?: string): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))].sort()
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

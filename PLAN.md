@@ -199,3 +199,17 @@
 
 - 2026-05-12: Operator reported the accepted cartridge result gauge was misleading because the warning-band label said 'Reseat/repeat' even while the action label said 'Accept single pass'. Updated the accepted-result helper text to state no repeat is required, changed the gauge labels to diagnostic bands instead of operator actions, and bumped the GUI to 0.13.0 for a visible update.
 - 2026-05-12: Operator asked about the `App v0.12 · update check failed` header. That is the Electron auto-updater status, not the launcher artifact update path, and is noisy/misleading for branch-built portable apps. Hide failed update checks from the operator header, only show a second update chip when an update is actually available, and bump the GUI to 0.14.0.
+- 2026-05-12: New approved UI scope for cartridge history and threshold review:
+  - Do not change cartridge accept/borderline/suspect thresholds yet based only on the preliminary `P1-STAGE-2026-05` batch; keep accepting sealed/open ratio `<0.25`, borderline `0.25` to `<0.28`, and suspect `>=0.28` until a known-good batch is collected.
+  - Replace the operator-facing raw JSON history panel with a compact visual cartridge history/batch review view that groups events into test runs and shows the same key ratio, flow, min/max, CV, sample quality, histogram, and metadata fields operators need during a live test.
+  - Preserve raw JSON as an engineering detail or file-link fallback, not as the default history experience.
+  - Add mirrored app-version metadata for new events so history can expose app-version changes; old records must display `unknown`.
+  - Make the horizontal sealed/open ratio gauge use a fixed x-axis with the acceptability range centered, and explicitly handle out-of-range values with edge arrows instead of misleading off-scale marker lines.
+  - After implementation and local validation, spawn subagents to review dashboard functionality, input validation/data parsing, robustness/safety, and packaging/portable impact before finalizing.
+- 2026-05-12: Cartridge history implementation completed and review findings addressed:
+  - Added grouped visual cartridge-history rows with operator, production batch, app version, tester/nozzle/seal metadata, compact measurement table, fixed-axis ratio gauge, expanded histograms, and raw JSON moved under engineering details.
+  - Added app-version persistence to mirrored event records and SQLite `mirrored_events.app_version`; Electron uses `app.getVersion()`, browser/mock uses the Vite-defined package version.
+  - Kept Phase 1 thresholds unchanged: accept `<0.25`, borderline `0.25` to `<0.28`, suspect `>=0.28`.
+  - Fixed review findings so latest-per-cartridge is selected before result filtering, repeat/invalid quality is sticky, compact `valid:false` data cannot classify as accept, legacy workflow-less cartridge events are included, repeat/unknown result counts are visible, and the loaded history window is now 10,000 records.
+  - Added release CI coverage for packaged cartridge seeded-history smoke before artifact upload.
+  - Local validation passed: `npm run typecheck`, `npm test` 46/46, `node --check verification\electron-cartridge-mock-cdp.mjs`, `python -m py_compile verification\seed-cartridge-history-smoke.py`, `npm run package:dir`, packaged seeded cartridge-history smoke, packaged all-mode linear-stage smoke, `npm run dist:portable`, and launcher dry-run. Post-push GitHub Actions artifact verification is still required for the new commit.

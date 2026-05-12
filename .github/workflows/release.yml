@@ -54,6 +54,28 @@ jobs:
             Get-Process | Where-Object { $_.ProcessName -like 'SporeScout Testing Tools*' } | Stop-Process -Force -ErrorAction SilentlyContinue
           }
 
+      - name: Smoke packaged cartridge dashboard history
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packageVersion = (Get-Content .\package.json | ConvertFrom-Json).version
+          $versionParts = $packageVersion.Split('.')
+          $displayVersion = '{0}.{1:D2}' -f [int]$versionParts[0], [int]$versionParts[1]
+          $env:SPORESCOUT_TESTING_TOOLS_EXACT_PORT = 'NO_REAL_PORT_FOR_RENDER_SMOKE'
+          $env:SPORESCOUT_HISTORY_SMOKE_USER_DATA = Join-Path $env:RUNNER_TEMP 'sporescout-testing-tools-cartridge-history-smoke'
+          $env:SPORESCOUT_EXPECT_HISTORY_TEXT = "SS-SA-007-030-0169|Harry Blake|P1-STAGE-2026-05|App v$displayVersion|Borderline|0.272|Min|Max"
+          python .\verification\seed-cartridge-history-smoke.py
+          $exe = Join-Path (Get-Location) 'release\win-unpacked\SporeScout Testing Tools.exe'
+          $screenshot = Join-Path $env:RUNNER_TEMP 'cartridge-history-smoke.png'
+          $process = Start-Process -FilePath $exe -ArgumentList "--user-data-dir=$env:SPORESCOUT_HISTORY_SMOKE_USER_DATA", '--remote-debugging-port=9231' -PassThru -WindowStyle Hidden
+          try {
+            node .\verification\electron-cartridge-mock-cdp.mjs http://127.0.0.1:9231 $screenshot
+          } finally {
+            Start-Sleep -Milliseconds 500
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Get-Process | Where-Object { $_.ProcessName -like 'SporeScout Testing Tools*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Upload portable app artifact
         uses: actions/upload-artifact@v4
         with:
