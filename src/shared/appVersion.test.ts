@@ -6,6 +6,7 @@ describe('app version display', () => {
     expect(formatDisplayVersion('0.1.0')).toBe('0.10')
     expect(formatDisplayVersion('0.11.0')).toBe('0.11')
     expect(formatDisplayVersion('0.12.0')).toBe('0.12')
+    expect(formatDisplayVersion('0.13.0')).toBe('0.13')
     expect(formatDisplayVersion('1.2.3')).toBe('1.20')
     expect(formatDisplayVersion('2.12.0')).toBe('2.12')
   })

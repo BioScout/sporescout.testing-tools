@@ -2127,6 +2127,7 @@ function ResultSummary({
   const ratio = guidance.sealedOpenRatio
   const sealed = measurements.sealed
   const title = guidanceOperatorLabel(guidance.guidance)
+  const isAccepted = guidance.guidance === 'ACCEPT_SINGLE_PASS'
 
   return (
     <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
@@ -2153,7 +2154,9 @@ function ResultSummary({
             <Box sx={{ minWidth: 0 }}>
               <Typography variant="subtitle1">{title}</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 640 }}>
-                Firmware guidance is report-only. Use the action label first; ratios and histograms help engineers spot abnormal patterns.
+                {isAccepted
+                  ? 'No repeat action is required. The ratio gauge and histograms are diagnostic references only.'
+                  : 'Use the action label first. The ratio gauge and histograms help engineers spot abnormal patterns.'}
               </Typography>
             </Box>
           </Stack>
@@ -2234,9 +2237,9 @@ function RatioThresholdBar({ ratio }: { ratio?: number }) {
         )}
       </Box>
       <Stack direction="row" justifyContent="space-between">
-        <Typography variant="caption" color="success.main">Accept</Typography>
-        <Typography variant="caption" color="warning.main">Reseat/repeat</Typography>
-        <Typography variant="caption" color="error.main">Suspect</Typography>
+        <Typography variant="caption" color="success.main">Accept range</Typography>
+        <Typography variant="caption" color="warning.main">Borderline band</Typography>
+        <Typography variant="caption" color="error.main">Suspect band</Typography>
       </Stack>
     </Box>
   )

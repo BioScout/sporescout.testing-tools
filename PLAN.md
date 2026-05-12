@@ -196,3 +196,5 @@
 - 2026-05-12: Launcher dry-run debug showed the git worktree probe was returning before fetch/pull because the `git rev-parse --is-inside-work-tree` output comparison was too strict. Trimmed the probe output before comparison and revalidated that the launcher reaches the auto-update path.
 
 - 2026-05-12: Operator reported a JavaScript main-process popup on app close and the app staying alive until killed in Task Manager. Root cause was shutdown disconnect emitting connection status after the BrowserWindow was destroyed. Added a destroyed-window guard and clear mainWindow on close before revalidating.
+
+- 2026-05-12: Operator reported the accepted cartridge result gauge was misleading because the warning-band label said 'Reseat/repeat' even while the action label said 'Accept single pass'. Updated the accepted-result helper text to state no repeat is required, changed the gauge labels to diagnostic bands instead of operator actions, and bumped the GUI to 0.13.0 for a visible update.
