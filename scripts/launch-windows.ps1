@@ -620,7 +620,7 @@ $localPortableApp = $portableApp
 $localPortableIsCurrent = $true
 if (!$Dev -and !$VerifyDownloadAvailability -and $portableApp) {
   $localPortableIsCurrent = Test-PortableMatchesCheckout -PortableApp $portableApp -CheckoutInfo $checkoutInfo
-  if (!$localPortableIsCurrent -and !$NoDownload) {
+  if (!$localPortableIsCurrent) {
     $portableApp = $null
   }
 }
@@ -665,9 +665,11 @@ if (!$Dev -and !$portableApp -and !$NoDownload -and $manifest.artifactDownload) 
   }
 }
 
-if (!$portableApp -and $localPortableApp) {
+if (!$portableApp -and $localPortableApp -and $localPortableIsCurrent) {
   Write-Host "Using existing local packaged app because no matching download was available." -ForegroundColor Yellow
   $portableApp = $localPortableApp
+} elseif (!$portableApp -and $localPortableApp -and !$localPortableIsCurrent) {
+  Write-Host "Not launching the existing local packaged app because it does not match this checkout." -ForegroundColor Yellow
 }
 
 if ($portableApp) {

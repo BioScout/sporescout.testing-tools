@@ -147,6 +147,26 @@ describe('cartridge workflow helpers', () => {
     expect(measurement?.sample_quality).toBe('acceptable')
   })
 
+  it('treats valid:false measurement artifacts as repeat quality', () => {
+    const measurement = extractMeasurement({
+      type: 'event',
+      event_name: 'dd_test_step_result',
+      data: {
+        step_name: 'MEASURE_SEALED_INLET',
+        artifacts: {
+          measurement: {
+            valid: false,
+            quality_ok: true,
+            flow_slpm_mean: 0.2,
+          },
+        },
+      },
+    })
+
+    expect(measurement?.valid).toBe(false)
+    expect(measurement?.sample_quality).toBe('repeat')
+  })
+
   it('extracts compact summary guidance and quality', () => {
     const guidance = extractGuidance({
       type: 'event',
@@ -236,5 +256,50 @@ describe('cartridge workflow helpers', () => {
 
     expect(guidance.sealedOpenRatio).toBe(1)
     expect(guidance.guidance).toBe('RESEAT_AND_REPEAT_SUSPECT_FAIL')
+  })
+
+  it('does not accept a low-ratio measurement when a phase is invalid', () => {
+    const guidance = deriveGuidanceFromMeasurements({
+      open: {
+        phase: 'open',
+        valid: true,
+        sample_count: 30,
+        slpm: 10,
+        raw_mean_slpm: 10,
+        median_slpm: 10,
+        stddev_slpm: 0.1,
+        min_slpm: 9.8,
+        max_slpm: 10.2,
+        trimmed_count: 24,
+        outlier_count: 0,
+        coefficient_of_variation: 0.01,
+        sample_quality: 'acceptable',
+        settle_ms: 12000,
+        dt_ms: 100,
+        flow_slpm_samples: [],
+      },
+      sealed: {
+        phase: 'sealed',
+        valid: false,
+        sample_count: 30,
+        slpm: 2,
+        raw_mean_slpm: 2,
+        median_slpm: 2,
+        stddev_slpm: 0.1,
+        min_slpm: 1.8,
+        max_slpm: 2.2,
+        trimmed_count: 24,
+        outlier_count: 0,
+        coefficient_of_variation: 0.01,
+        sample_quality: 'acceptable',
+        settle_ms: 12000,
+        dt_ms: 100,
+        flow_slpm_samples: [],
+      },
+    })
+
+    expect(guidance.sealedOpenRatio).toBe(0.2)
+    expect(guidance.sampleQuality).toBe('repeat')
+    expect(guidance.guidance).toBe('REPEAT_MEASUREMENT_QUALITY')
   })
 })

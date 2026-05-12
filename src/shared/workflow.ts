@@ -255,9 +255,9 @@ export function deriveGuidanceFromMeasurements(measurements: Record<string, Meas
   }
 
   const sampleQuality =
-    open.sample_quality === 'acceptable' &&
-    sealed.sample_quality === 'acceptable' &&
-    (!nozzle || nozzle.sample_quality === 'acceptable')
+    measurementIsAcceptable(open) &&
+    measurementIsAcceptable(sealed) &&
+    (!nozzle || measurementIsAcceptable(nozzle))
       ? 'acceptable'
       : 'repeat'
   const sealedOpenRatio = sealed.slpm / open.slpm
@@ -321,9 +321,10 @@ export function extractMeasurement(event: GuiEventEnvelope): MeasurementSummary 
   }
 
   const qualityOk = asBoolean(source.quality_ok) ?? asBoolean(source.q)
+  const valid = asBoolean(source.valid)
   return {
     phase,
-    valid: asBoolean(source.valid),
+    valid,
     sample_count: asNumber(source.sample_count) ?? asNumber(source.cnt),
     slpm,
     raw_mean_slpm: asNumber(source.flow_slpm_raw_mean) ?? asNumber(source.raw_mean_slpm) ?? asNumber(source.raw) ?? slpm,
@@ -336,7 +337,7 @@ export function extractMeasurement(event: GuiEventEnvelope): MeasurementSummary 
     coefficient_of_variation:
       asNumber(source.coefficient_of_variation) ?? asNumber(source.cv) ?? 0,
     sample_quality:
-      source.sample_quality === 'repeat' || qualityOk === false ? 'repeat' : 'acceptable',
+      source.sample_quality === 'repeat' || qualityOk === false || valid === false ? 'repeat' : 'acceptable',
     stability_limit_slpm: asNumber(source.stability_limit_slpm),
     settle_ms: asNumber(source.settle_ms) ?? 12000,
     dt_ms: asNumber(source.dt_ms) ?? 100,
@@ -348,6 +349,10 @@ export function extractMeasurement(event: GuiEventEnvelope): MeasurementSummary 
     flow_lpm_mean: asNumber(source.flow_lpm_mean) ?? asNumber(source.lpm),
     flow_slpm_samples: asNumberArray(source.flow_slpm_samples),
   }
+}
+
+function measurementIsAcceptable(measurement: MeasurementSummary): boolean {
+  return measurement.valid !== false && measurement.sample_quality === 'acceptable'
 }
 
 export function progressLabel(phase: TestPhase, elapsedMs: number): string {

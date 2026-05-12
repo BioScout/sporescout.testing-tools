@@ -214,3 +214,10 @@
   - Added release CI coverage for packaged cartridge seeded-history smoke before artifact upload.
   - Local validation passed: `npm run typecheck`, `npm test` 46/46, `node --check verification\electron-cartridge-mock-cdp.mjs`, `python -m py_compile verification\seed-cartridge-history-smoke.py`, `npm run package:dir`, packaged seeded cartridge-history smoke, packaged all-mode linear-stage smoke, `npm run dist:portable`, and launcher dry-run.
   - Commit `a1f66c7ec115032c82547009846f01e63e9ec059` was pushed. GitHub Actions Release workflow run `25723596187` completed successfully, and `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit workflow artifact `sporescout-testing-tools-portable`.
+- 2026-05-12: Final review findings addressed for the v0.16 cartridge history candidate:
+  - Invalid or repeat-quality measurements now remain repeat in both live guidance and historical runs, including phase-level `valid:false` compact summaries that arrive after earlier expanded acceptable measurements.
+  - The launcher now fails closed instead of launching a stale local portable executable when the local app metadata is missing or does not match the checked-out commit.
+  - App shutdown during a timed cartridge-removal unlock now tries to relock through the queued serial command/response path before disconnecting, with a bounded solenoid command timeout.
+  - Bumped the visible GUI version to `0.16.0` / `App v0.16`.
+  - Local validation passed: `npm test` 49/49, `npm run typecheck`, packaged all-mode linear-stage smoke, packaged seeded cartridge-history smoke with a fake exact serial port, launcher stale-local refusal check, and `npm run dist:portable`.
+  - Post-push GitHub Actions artifact verification is still required for the new v0.16 commit.

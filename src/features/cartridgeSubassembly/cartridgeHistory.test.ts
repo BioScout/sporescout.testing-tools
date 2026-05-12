@@ -158,6 +158,31 @@ describe('cartridge history normalization', () => {
     expect(runs[0].sampleQuality).toBe('repeat')
     expect(cartridgeHistoryResult(runs[0])).toBe('repeat')
   })
+
+  it('lets later compact phase invalidity override earlier acceptable expanded measurements', () => {
+    const runs = buildCartridgeHistoryRuns([
+      measurementEvent('evt-open-ok', 'run-summary-invalid', 'open', 14, '2026-05-12T06:00:00.000Z'),
+      measurementEvent('evt-sealed-ok', 'run-summary-invalid', 'sealed', 2.8, '2026-05-12T06:00:10.000Z'),
+      storedEvent({
+        id: 'evt-summary-invalid-phase',
+        createdAt: '2026-05-12T06:00:20.000Z',
+        appVersion: '0.15.0',
+        data: {
+          cart: 'SS-SA-007-030-0189',
+          run: 'run-summary-invalid',
+          g: 'ACCEPT_SINGLE_PASS',
+          o: { slpm: 14, q: true, valid: true },
+          s: { slpm: 2.8, q: true, valid: false },
+          r: { so: 0.2, valid: true },
+        },
+      }),
+    ])
+
+    expect(runs[0].measurements.sealed?.valid).toBe(false)
+    expect(runs[0].measurements.sealed?.sample_quality).toBe('repeat')
+    expect(runs[0].sampleQuality).toBe('repeat')
+    expect(cartridgeHistoryResult(runs[0])).toBe('repeat')
+  })
 })
 
 function measurementEvent(

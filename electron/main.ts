@@ -47,6 +47,7 @@ let serialCommandQueue: Promise<unknown> = Promise.resolve()
 let connectionGeneration = 0
 let engineeringUnlocked = false
 let linearStageRunInFlight: { command: string; startedAt: string } | undefined
+let appShutdownInProgress = false
 
 interface PendingResponse {
   command: string
@@ -62,6 +63,7 @@ const LONG_SERIAL_RESPONSE_TIMEOUT_MS = 35 * 60 * 1000
 const QUICK_SERIAL_RESPONSE_TIMEOUT_MS = 90 * 1000
 const OVERSIZED_RESPONSE_LEGACY_GRACE_MS = 120 * 1000
 const SOLENOID_RELOCK_MS = 45000
+const SOLENOID_COMMAND_TIMEOUT_MS = 10 * 1000
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -111,11 +113,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  disconnectSerial()
-  store?.close()
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  void shutdownAfterWindowsClosed()
 })
 
 function registerIpcHandlers(): void {
@@ -157,6 +155,7 @@ function registerIpcHandlers(): void {
       }
     }
 
+    await relockSolenoidBeforeDisconnect()
     disconnectSerial()
 
     const exactPort = process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim()
@@ -235,6 +234,7 @@ function registerIpcHandlers(): void {
     if (linearStageRunInFlight) {
       return { ok: false, error: `Cannot disconnect while ${linearStageRunInFlight.command} is running.` }
     }
+    await relockSolenoidBeforeDisconnect()
     disconnectSerial()
     return { ok: true }
   })
@@ -574,11 +574,36 @@ function clearPendingTimers(pending: PendingResponse): void {
   }
 }
 
+async function shutdownAfterWindowsClosed(): Promise<void> {
+  if (appShutdownInProgress) {
+    return
+  }
+  appShutdownInProgress = true
+  try {
+    await relockSolenoidBeforeDisconnect()
+  } finally {
+    disconnectSerial()
+    store?.close()
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  }
+}
+
+async function relockSolenoidBeforeDisconnect(): Promise<void> {
+  if (!solenoidRelockTimer || connectionMode !== 'serial' || !serialPort?.isOpen) {
+    return
+  }
+
+  clearSolenoidRelockTimer()
+  const result = await dispatchCommand('solenoid Lock')
+  if (!result.accepted || result.timedOut || result.response?.ok !== true) {
+    emitSerialLine(result.response?.error ?? result.error ?? 'Solenoid relock before disconnect did not receive an acknowledgement.')
+  }
+}
+
 function disconnectSerial(): void {
   linearStageRunInFlight = undefined
-  if (solenoidRelockTimer && serialPort?.isOpen) {
-    serialPort.write('solenoid Lock\n')
-  }
   clearSolenoidRelockTimer()
   connectionGeneration += 1
   for (const pending of pendingResponses.splice(0)) {
@@ -669,6 +694,9 @@ function serialResponseTimeoutMs(command: string): number {
     normalized.startsWith('test cartridge_leak sealed ')
   ) {
     return LONG_SERIAL_RESPONSE_TIMEOUT_MS
+  }
+  if (normalized === 'solenoid lock' || normalized === 'solenoid isunlocked') {
+    return SOLENOID_COMMAND_TIMEOUT_MS
   }
   return QUICK_SERIAL_RESPONSE_TIMEOUT_MS
 }

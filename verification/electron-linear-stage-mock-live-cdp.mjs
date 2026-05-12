@@ -179,7 +179,7 @@ async function ensureLinearStagePage(client) {
   })()`)
   if (!clicked) throw new Error('Linear Stage navigation target not found.')
   await waitFor(client, 'linear-stage page', `document.body.innerText.includes('Operator-guided motion, optical response, and scan audit validation.')`, 60000)
-  await waitFor(client, 'linear-stage app version', `document.body.innerText.toLowerCase().includes('app v0.15')`, 60000)
+  await waitFor(client, 'linear-stage app version', `document.body.innerText.toLowerCase().includes('app v0.16')`, 60000)
 }
 
 async function setInputByLabel(client, label, value) {

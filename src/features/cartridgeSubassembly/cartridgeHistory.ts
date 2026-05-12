@@ -96,10 +96,7 @@ export function buildCartridgeHistoryRuns(events: StoredMirroredEventRecord[]): 
     for (const phase of PHASES) {
       const summaryMeasurement = measurementFromSummary(data, phase)
       if (summaryMeasurement) {
-        run.measurements[phase] = {
-          ...summaryMeasurement,
-          ...run.measurements[phase],
-        }
+        run.measurements[phase] = mergeSummaryMeasurement(run.measurements[phase], summaryMeasurement)
       }
     }
 
@@ -309,6 +306,20 @@ function sampleQualityFromMeasurements(measurements: Partial<Record<TestPhase, M
 function compactValidityQuality(data: Record<string, unknown>): string | undefined {
   const ratios = firstRecord(data.r, data.ratios)
   return asBoolean(ratios.valid) === false ? 'repeat' : undefined
+}
+
+function mergeSummaryMeasurement(
+  existing: MeasurementSummary | undefined,
+  summary: MeasurementSummary,
+): MeasurementSummary {
+  if (!existing) return summary
+  const quality = combineSampleQuality(existing.sample_quality, summary.sample_quality)
+  return {
+    ...summary,
+    ...existing,
+    valid: existing.valid === false || summary.valid === false ? false : existing.valid ?? summary.valid,
+    sample_quality: quality === 'repeat' || quality === 'acceptable' ? quality : existing.sample_quality,
+  }
 }
 
 function combineSampleQuality(...values: Array<string | undefined>): string | undefined {
