@@ -194,3 +194,5 @@
 - 2026-05-12: Local validation for the `0.12.0` patch passed: typecheck, unit tests, `package:dir`, packaged cartridge smoke, and packaged all-mode linear-stage smoke. Launcher update ordering was corrected so the script fetches/pulls before reading the launch manifest.
 - 2026-05-12: Focused review caught that the browser/mock API still used the old completed-run solenoid unlock gate. Updated it to match Electron: engineering access, no active run, or completed cartridge run may use the timed unlock path.
 - 2026-05-12: Launcher dry-run debug showed the git worktree probe was returning before fetch/pull because the `git rev-parse --is-inside-work-tree` output comparison was too strict. Trimmed the probe output before comparison and revalidated that the launcher reaches the auto-update path.
+
+- 2026-05-12: Operator reported a JavaScript main-process popup on app close and the app staying alive until killed in Task Manager. Root cause was shutdown disconnect emitting connection status after the BrowserWindow was destroyed. Added a destroyed-window guard and clear mainWindow on close before revalidating.

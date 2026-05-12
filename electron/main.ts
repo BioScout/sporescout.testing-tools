@@ -84,6 +84,10 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 }
 
 app.whenReady().then(() => {
@@ -621,7 +625,10 @@ function handleSerialConnectionLost(message: string): void {
 }
 
 function emitConnectionStatus(status: ConnectionStatusEvent): void {
-  mainWindow?.webContents.send('serial:connectionStatus', status)
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return
+  }
+  mainWindow.webContents.send('serial:connectionStatus', status)
 }
 
 function scheduleSolenoidRelock(lockAfterMs?: number): void {
