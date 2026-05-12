@@ -11,7 +11,7 @@
 ## Current Execution State
 
 - Phase: implementation active after approved plan.
-- Latest meaningful update: implemented the cartridge visual history/batch review view and App v0.15 metadata release candidate; local validation and review fixes are complete, with post-push GitHub Actions artifact verification still required.
+- Latest meaningful update: implemented the cartridge visual history/batch review view and App v0.15 metadata release candidate; local validation, review fixes, GitHub Actions release workflow, and checked-out-commit portable artifact verification are complete.
 - Approved target device in this thread: SS-A-001-101A-0112 only.
 - Approved target details: Particle id 0a10aced202194944a087ec4, Particle product id 33608, SSH alias SS-A-001-101A-0112. No local serial port is currently connected or approved for this device in this thread.
 - Device rule: before any real-device action, restate that the action is only for SS-A-001-101A-0112. Never interact with any other real device, including SS-A-001-101A-0013.
@@ -34,7 +34,7 @@
 - Current request adds a cartridge tester handoff: validate and commit the local cartridge GUI changes, push the branch, and verify a matching Release workflow artifact so a fresh Windows clone can run the GUI without installing developer dependencies.
 - Latest local cartridge handoff validation passed: `npm run typecheck`, `npm test` 38/38, `npm run dist:portable`, launcher dry-run, and render-only packaged Electron smoke with a fake exact-port value. The smoke must remain render-only unless an exact approved serial port is supplied in the current thread.
 - Commit `cc54169` is pushed and has verified Release workflow artifact `sporescout-testing-tools-portable` from run `25699897362`. SS-A-001-101A-0112 is flashed with M-SoM firmware `9003003`; cartridge readiness returned READY.
-- The current Testing Tools candidate is `0.15.0`. It adds grouped cartridge history rows, app-version mirroring, fixed-axis ratio gauge behavior, repeat/unknown result visibility, and release CI cartridge seeded-history smoke coverage. Local validation passed before commit/push; verify the matching Release workflow artifact after pushing.
+- The current Testing Tools candidate is `0.15.0`. It adds grouped cartridge history rows, app-version mirroring, fixed-axis ratio gauge behavior, repeat/unknown result visibility, and release CI cartridge seeded-history smoke coverage. Commit `a1f66c7ec115032c82547009846f01e63e9ec059` is pushed, GitHub Actions Release run `25723596187` passed, and the matching portable artifact was verified with `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability`.
 
 ## Required Validation
 
