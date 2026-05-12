@@ -150,7 +150,7 @@ const browserApi: TestingToolsApi = {
     return { ok: true }
   },
   async getRuntimeConfig() {
-    return { serialBackend: 'browser', appVersion: '0.11.0' }
+    return { serialBackend: 'browser', appVersion: '0.12.0' }
   },
   async sendCommand(command: string) {
     if (command.trim() === 'solenoid Lock') {
@@ -638,6 +638,9 @@ function serialResponseTimeoutMs(command: string): number {
 
 function canUseBrowserTimedSolenoidUnlock(): boolean {
   if (browserEngineeringUnlocked) {
+    return true
+  }
+  if (!activeRunContext) {
     return true
   }
   return activeRunContext?.workflow === 'cartridge_subassembly' && activeRunContext.cartridge_phase === 'complete'

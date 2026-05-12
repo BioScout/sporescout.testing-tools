@@ -647,6 +647,9 @@ function canUseTimedSolenoidUnlock(): boolean {
   if (engineeringUnlocked) {
     return true
   }
+  if (!activeRunContext) {
+    return true
+  }
   return activeRunContext?.workflow === 'cartridge_subassembly' && activeRunContext.cartridge_phase === 'complete'
 }
 

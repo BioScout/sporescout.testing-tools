@@ -3,6 +3,7 @@ param(
   [switch]$DryRun,
   [switch]$VerifyDownloadAvailability,
   [switch]$NoDownload,
+  [switch]$NoGitUpdate,
   [string]$ManifestPath
 )
 
@@ -267,6 +268,56 @@ function Get-GitCheckoutInfo {
       ShortCommit = $commit.Trim().Substring(0, [Math]::Min(12, $commit.Trim().Length))
       Branch = $branch
       Tag = $tag
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
+function Update-GitCheckout {
+  param([string]$Root)
+
+  if (!(Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host "Git was not found; skipping repository update." -ForegroundColor Yellow
+    return
+  }
+
+  Push-Location -LiteralPath $Root
+  try {
+    $inside = (& git rev-parse --is-inside-work-tree 2>$null | Select-Object -First 1)
+    if ("$inside".Trim() -ne 'true') {
+      return
+    }
+
+    $branch = (& git branch --show-current 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+      Write-Host "Detached checkout; skipping repository update."
+      return
+    }
+
+    $upstream = (& git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($upstream)) {
+      Write-Host "No upstream branch configured for '$($branch.Trim())'; skipping repository update."
+      return
+    }
+
+    $dirty = (& git status --porcelain 2>$null)
+    if ($dirty) {
+      Write-Host "Repository has local changes; skipping automatic pull." -ForegroundColor Yellow
+      return
+    }
+
+    Write-Host "Checking for launcher/app updates on $($upstream.Trim())..."
+    & git fetch --prune
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Git fetch failed; continuing with local checkout." -ForegroundColor Yellow
+      return
+    }
+
+    & git pull --ff-only
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Git pull --ff-only failed; continuing with local checkout." -ForegroundColor Yellow
+      return
     }
   } finally {
     Pop-Location
@@ -559,6 +610,9 @@ function Invoke-Npm {
 }
 
 $root = Resolve-Root
+if (!$Dev -and !$NoGitUpdate -and [string]::IsNullOrWhiteSpace($ManifestPath)) {
+  Update-GitCheckout -Root $root
+}
 $manifest = Read-Manifest -Root $root -Path $ManifestPath
 $checkoutInfo = Get-GitCheckoutInfo -Root $root
 $portableApp = if ($Dev -or $VerifyDownloadAvailability) { $null } else { Find-PortableApp -Root $root -Manifest $manifest }

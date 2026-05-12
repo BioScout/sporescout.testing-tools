@@ -2452,13 +2452,14 @@ function MeasurementTable({ measurements, dense = false }: { measurements: Recor
   const rows: TestPhase[] = ['open', 'nozzle', 'sealed']
   return (
     <Box sx={{ minWidth: 0, overflowX: 'auto' }}>
-      <Table size="small" sx={{ minWidth: dense ? 520 : 560 }}>
+      <Table size="small" sx={{ minWidth: dense ? 580 : 620 }}>
       <TableHead>
         <TableRow>
           <TableCell>State</TableCell>
           <TableCell align="right">Trimmed slpm</TableCell>
           <TableCell align="right">Raw mean</TableCell>
-          <TableCell align="right">Min / max</TableCell>
+          <TableCell align="right">Min</TableCell>
+          <TableCell align="right">Max</TableCell>
           <TableCell align="right">CV</TableCell>
           <TableCell align="center">Quality</TableCell>
         </TableRow>
@@ -2471,9 +2472,8 @@ function MeasurementTable({ measurements, dense = false }: { measurements: Recor
               <TableCell sx={{ textTransform: 'capitalize' }}>{phase}</TableCell>
               <TableCell align="right">{measurement ? measurement.slpm.toFixed(3) : '-'}</TableCell>
               <TableCell align="right">{measurement ? measurement.raw_mean_slpm.toFixed(3) : '-'}</TableCell>
-              <TableCell align="right">
-                {measurement ? `${measurement.min_slpm.toFixed(3)} / ${measurement.max_slpm.toFixed(3)}` : '-'}
-              </TableCell>
+              <TableCell align="right">{measurement ? measurement.min_slpm.toFixed(3) : '-'}</TableCell>
+              <TableCell align="right">{measurement ? measurement.max_slpm.toFixed(3) : '-'}</TableCell>
               <TableCell align="right">
                 {measurement ? `${(measurement.coefficient_of_variation * 100).toFixed(1)}%` : '-'}
               </TableCell>
