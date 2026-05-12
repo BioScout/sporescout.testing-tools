@@ -68,7 +68,7 @@ import {
   type StorageSummary,
   type UpdateCheckResult,
 } from '../../shared/contracts'
-import { appVersionStatusColor, appVersionStatusLabel } from '../../shared/appVersion'
+import { appVersionStatusColor, appVersionStatusLabel, formatDisplayVersion } from '../../shared/appVersion'
 import { parseSerialLine } from '../../shared/serialParser'
 import { getDefaultConnectionMode, getTestingToolsApi } from '../../services/testingToolsApi'
 import {
@@ -1049,7 +1049,7 @@ export function LinearStagePage() {
       <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 34, flexWrap: 'wrap' }}>
         <StatusChip label={deviceStatus} connected={connected} status={runSummary?.status} />
         <Chip size="small" label={appVersionStatusLabel(appVersion, updateResult)} color={appVersionStatusColor(updateResult)} />
-        <Chip size="small" label={`Update: ${updateResult.status}`} color={updateResult.status === 'failed' ? 'warning' : 'default'} />
+        {updateResult.status === 'available' && <Chip size="small" label={`Update: v${formatDisplayVersion(updateResult.version)}`} color="warning" />}
         {activeRunId && <Chip size="small" label={activeRunId} onClick={() => updateHistoryRunFilter(activeRunId)} />}
         {faultText && <Alert severity="error" sx={{ py: 0, flex: 1 }}>{faultText}</Alert>}
       </Stack>

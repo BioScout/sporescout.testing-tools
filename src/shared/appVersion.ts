@@ -18,12 +18,11 @@ export function appVersionStatusLabel(appVersion: string | undefined, updateResu
   if (updateResult.status === 'current') return `${current} · latest`
   if (updateResult.status === 'available') return `${current} · update v${formatDisplayVersion(updateResult.version)}`
   if (updateResult.status === 'checking') return `${current} · checking`
-  if (updateResult.status === 'failed') return `${current} · update check failed`
   return current
 }
 
 export function appVersionStatusColor(updateResult: UpdateCheckResult): 'default' | 'success' | 'warning' {
   if (updateResult.status === 'current') return 'success'
-  if (updateResult.status === 'available' || updateResult.status === 'failed') return 'warning'
+  if (updateResult.status === 'available') return 'warning'
   return 'default'
 }

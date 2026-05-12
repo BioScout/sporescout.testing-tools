@@ -150,7 +150,7 @@ const browserApi: TestingToolsApi = {
     return { ok: true }
   },
   async getRuntimeConfig() {
-    return { serialBackend: 'browser', appVersion: '0.13.0' }
+    return { serialBackend: 'browser', appVersion: '0.14.0' }
   },
   async sendCommand(command: string) {
     if (command.trim() === 'solenoid Lock') {

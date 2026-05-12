@@ -121,7 +121,7 @@ try {
     const text = document.body.innerText.toLowerCase();
     return [
       'operator-guided cartridge leak characterization.',
-      'app v0.13',
+      'app v0.14',
       'operator',
       'batch',
       'tester serial',
