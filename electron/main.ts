@@ -62,7 +62,7 @@ const pendingResponses: PendingResponse[] = []
 const LONG_SERIAL_RESPONSE_TIMEOUT_MS = 35 * 60 * 1000
 const QUICK_SERIAL_RESPONSE_TIMEOUT_MS = 90 * 1000
 const OVERSIZED_RESPONSE_LEGACY_GRACE_MS = 120 * 1000
-const SOLENOID_RELOCK_MS = 45000
+const SOLENOID_RELOCK_MS = 20000
 const SOLENOID_COMMAND_TIMEOUT_MS = 10 * 1000
 
 function createWindow(): void {

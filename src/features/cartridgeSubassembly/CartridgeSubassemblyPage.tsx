@@ -126,6 +126,7 @@ type RunSnapshot = Required<Pick<
 
 const api = getTestingToolsApi()
 const HISTORY_PAGE_LIMIT = 10000
+const REMOVAL_UNLOCK_RELOCK_MS = 20000
 
 export function CartridgeSubassemblyPage() {
   const [settings, setSettings] = useState<StationSettings>(DEFAULT_STATION_SETTINGS)
@@ -169,6 +170,7 @@ export function CartridgeSubassemblyPage() {
   const [historyCartridgeFilter, setHistoryCartridgeFilter] = useState('')
   const [solenoidLocked, setSolenoidLocked] = useState(false)
   const [testStage, setTestStage] = useState<TestStage>('idle')
+  const [recoveredRunNotice, setRecoveredRunNotice] = useState('')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult>({
     checked_at: '',
     status: 'idle',
@@ -234,6 +236,7 @@ export function CartridgeSubassemblyPage() {
 
     api.getActiveRunContext().then((context) => {
       if (!mounted || !context) return
+      if (context.workflow !== 'cartridge_subassembly') return
       if (context.run_uid) setRunUid(context.run_uid)
       if (context.cartridge_serial) {
         setCartridgeSerial(context.cartridge_serial)
@@ -242,10 +245,11 @@ export function CartridgeSubassemblyPage() {
       if (context.operator) setOperator(context.operator)
       if (context.batch) setBatch(context.batch)
       if (context.tester_device_serial) setTesterDeviceSerial(context.tester_device_serial)
+      activeRunSnapshot.current = context as RunSnapshot
+      void api.setActiveRunContext(context)
+      restoreRecoveredRun(context)
       if (context.run_uid) {
-        activeRunSnapshot.current = context as RunSnapshot
-        void api.setActiveRunContext(context)
-        restoreRecoveredRun(context)
+        void hydrateRecoveredRun(context.run_uid)
       }
     })
 
@@ -279,15 +283,17 @@ export function CartridgeSubassemblyPage() {
         invalidateOperation()
         setDeviceStatus('Disconnected')
         setSolenoidLocked(false)
-        setTestStage('idle')
         const activeRunUid = activeRunSnapshot.current?.run_uid
         if (!activeRunUid) {
+          setTestStage('idle')
           activeRunSnapshot.current = null
           void api.setActiveRunContext(undefined)
+          setRecoveredRunNotice('')
           if (status.message) {
             setLatestAction(status.message)
           }
         } else {
+          setRecoveredRunNotice('Connection lost during an active cartridge run. Reconnect the same tester before continuing.')
           setLatestAction(`Connection lost with active run_uid ${activeRunUid}. Reconnect before continuing.`)
         }
       }
@@ -482,11 +488,8 @@ export function CartridgeSubassemblyPage() {
               if (!isCurrentOperation(token)) return
               if (!solenoidLocked) return
             }
-      setDeviceStatus('Ready')
-      setCurrentStep('insert')
-      setLatestAction('Tester ready. Insert cartridge and scan serial.')
-      setFaultText('')
-      return
+            finishReadinessAfterReady()
+            return
           }
         }
       }
@@ -506,10 +509,20 @@ export function CartridgeSubassemblyPage() {
       }
     }
 
+    finishReadinessAfterReady()
+  }
+
+  function finishReadinessAfterReady() {
+    setFaultText('')
+    const activeRun = activeRunSnapshot.current
+    if (activeRun?.workflow === 'cartridge_subassembly' && activeRun.run_uid) {
+      restoreRecoveredRun(activeRun)
+      return
+    }
+
     setDeviceStatus('Ready')
     setCurrentStep('insert')
     setLatestAction('Tester ready. Insert cartridge and scan serial.')
-    setFaultText('')
   }
 
   async function sendReadinessAttempt(items: ReadinessItem[]) {
@@ -573,7 +586,7 @@ export function CartridgeSubassemblyPage() {
     return errors
   }
 
-  function buildRunSnapshot(nextRunUid = runUid): RunSnapshot {
+  function buildRunSnapshot(nextRunUid = ''): RunSnapshot {
     return {
       operator: operator.trim(),
       batch: batch.trim(),
@@ -596,8 +609,9 @@ export function CartridgeSubassemblyPage() {
     }
 
     const token = beginOperation()
-    const snapshot = buildRunSnapshot()
+    const snapshot = buildRunSnapshot('')
     activeRunSnapshot.current = snapshot
+    setRecoveredRunNotice('')
     setFaultText('')
     setGuidance({})
     setMeasurements({})
@@ -831,8 +845,35 @@ export function CartridgeSubassemblyPage() {
     }
   }
 
+  async function hydrateRecoveredRun(targetRunUid: string) {
+    if (activeRunSnapshot.current?.run_uid !== targetRunUid) return
+    const records = await api.getHistoricalRecords({ limit: HISTORY_PAGE_LIMIT, runUid: targetRunUid })
+    if (activeRunSnapshot.current?.run_uid !== targetRunUid) return
+    setHistoricalRecords(records)
+    applyStoredEventsForRun(records, targetRunUid)
+  }
+
   function restoreRecoveredRun(context: LocalRunContext) {
-    if (context.workflow !== 'cartridge_subassembly' || !context.run_uid) {
+    if (context.workflow !== 'cartridge_subassembly') {
+      return
+    }
+
+    if (!context.run_uid) {
+      if (context.cartridge_phase === 'open') {
+        activeRunSnapshot.current = null
+        void api.setActiveRunContext(undefined)
+        setRunUid('')
+        setCartridgeInput('')
+        setCartridgeSerial('')
+        setMeasurements({})
+        setGuidance({})
+        setCurrentStep('scan')
+        setTestStage('idle')
+        setDeviceStatus('Recovery needed')
+        setFaultText('Previous cartridge start was interrupted before the firmware run_uid was saved. Remove or reseat the cartridge, then scan it again to start a new run.')
+        setLatestAction('Recovered an interrupted open step without a run_uid. Start this cartridge again from scan.')
+        setRecoveredRunNotice('Previous cartridge start was recovered without a firmware run_uid. Remove or reseat the cartridge and scan it again before testing.')
+      }
       return
     }
 
@@ -841,6 +882,7 @@ export function CartridgeSubassemblyPage() {
       setTestStage('fit_nozzle')
       setDeviceStatus('Fit nozzle')
       setLatestAction(`Recovered active run_uid ${context.run_uid}. Fit the nozzle, then continue.`)
+      setRecoveredRunNotice('Previous cartridge run was recovered after app restart. Continue only if the cartridge is still in the bay and the fixture state matches this prompt.')
       return
     }
 
@@ -849,6 +891,7 @@ export function CartridgeSubassemblyPage() {
       setTestStage('fit_seal')
       setDeviceStatus('Fit seal')
       setLatestAction(`Recovered active run_uid ${context.run_uid}. Fit the seal, then continue.`)
+      setRecoveredRunNotice('Previous cartridge run was recovered after app restart. Continue only if the cartridge is still in the bay and the fixture state matches this prompt.')
       return
     }
 
@@ -856,20 +899,21 @@ export function CartridgeSubassemblyPage() {
       setCurrentStep('remove')
       setTestStage('complete')
       setDeviceStatus('Remove cartridge')
-      setLatestAction(`Recovered completed run_uid ${context.run_uid}. Remove the cartridge and lock the bay.`)
+      setLatestAction(`Recovered completed run_uid ${context.run_uid}. Confirm the bay is empty and locked before starting another cartridge.`)
+      setRecoveredRunNotice('Previous completed run was recovered after app restart. Reconnect to verify the lock, then confirm the cartridge is removed and the bay is empty.')
     }
   }
 
   async function unlockForRemoval() {
     setLatestAction('Unlock requested by operator.')
-    const result = await api.unlockSolenoidForRemoval(45000)
+    const result = await api.unlockSolenoidForRemoval(REMOVAL_UNLOCK_RELOCK_MS)
     if (!result.accepted || result.timedOut || result.response?.ok !== true) {
       setFaultText(result.response?.error ?? result.error ?? 'Solenoid unlock failed.')
       setDeviceStatus('Fault')
       return
     }
     setSolenoidLocked(false)
-    setLatestAction('Solenoid unlocked. The app will lock it again within 45 seconds.')
+    setLatestAction('Solenoid unlocked. The app will lock it again within 20 seconds.')
   }
 
   async function lockSolenoid(): Promise<boolean> {
@@ -901,6 +945,7 @@ export function CartridgeSubassemblyPage() {
     if (!locked) return
     await api.setActiveRunContext(undefined)
     activeRunSnapshot.current = null
+    setRecoveredRunNotice('')
     setTestStage('idle')
     setDeviceStatus('Ready')
     setCurrentStep('next')
@@ -920,6 +965,7 @@ export function CartridgeSubassemblyPage() {
     setTestStage('idle')
     void api.setActiveRunContext(undefined)
     activeRunSnapshot.current = null
+    setRecoveredRunNotice('')
     setCurrentStep('insert')
   }
 
@@ -981,6 +1027,12 @@ export function CartridgeSubassemblyPage() {
 
     await api.setActiveRunContext(undefined)
     activeRunSnapshot.current = null
+    setRecoveredRunNotice('')
+    setCartridgeInput('')
+    setCartridgeSerial('')
+    setMeasurements({})
+    setGuidance({})
+    setFaultText('')
     setTestStage('idle')
     setDeviceStatus('Ready')
     setCurrentStep('insert')
@@ -1231,6 +1283,7 @@ export function CartridgeSubassemblyPage() {
         {updateResult.status === 'available' && <Chip size="small" label={`Update: v${formatDisplayVersion(updateResult.version)}`} color="warning" />}
         {runUid && <Chip size="small" label={`run_uid ${runUid}`} />}
         {faultText && <Alert severity="error" sx={{ py: 0, flex: '1 1 360px' }}>{faultText}</Alert>}
+        {recoveredRunNotice && !faultText && <Alert severity="warning" sx={{ py: 0, flex: '1 1 520px' }}>{recoveredRunNotice}</Alert>}
       </Stack>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '220px minmax(0, 1fr)', xl: '220px minmax(0, 1fr) 330px' }, gap: 2, minWidth: 0 }}>
@@ -1406,11 +1459,16 @@ export function CartridgeSubassemblyPage() {
               Bay should be empty and solenoid locked before the cartridge clicks into place.
             </Typography>
           </Box>
+          {!connected && (
+            <Alert severity="info">
+              Connect the tester before using solenoid controls or inserting a cartridge.
+            </Alert>
+          )}
           <Stack direction="row" spacing={1}>
-            <Button startIcon={<LockOpenIcon />} onClick={unlockForRemoval}>
+            <Button startIcon={<LockOpenIcon />} onClick={unlockForRemoval} disabled={!connected}>
               Unlock for recovery
             </Button>
-            <Button startIcon={<LockIcon />} onClick={lockSolenoid}>
+            <Button startIcon={<LockIcon />} onClick={lockSolenoid} disabled={!connected}>
               Lock solenoid
             </Button>
           </Stack>
@@ -1471,24 +1529,28 @@ export function CartridgeSubassemblyPage() {
             <Alert
               severity="info"
               action={(
-                <Button color="inherit" size="small" onClick={continueNozzleMeasurement}>
+                <Button color="inherit" size="small" onClick={continueNozzleMeasurement} disabled={!connected} sx={{ minWidth: 110, whiteSpace: 'nowrap' }}>
                   Nozzle fitted
                 </Button>
               )}
             >
-              Fit nozzle ID {activeRunSnapshot.current?.nozzle_id ?? settings.defaultNozzleId}, then continue to the nozzle measurement.
+              {connected
+                ? `Fit nozzle ID ${activeRunSnapshot.current?.nozzle_id ?? settings.defaultNozzleId}, then continue to the nozzle measurement.`
+                : 'Reconnect the tester before continuing this recovered run.'}
             </Alert>
           )}
           {testStage === 'fit_seal' && (
             <Alert
               severity="info"
               action={(
-                <Button color="inherit" size="small" onClick={continueSealedMeasurement}>
+                <Button color="inherit" size="small" onClick={continueSealedMeasurement} disabled={!connected} sx={{ minWidth: 98, whiteSpace: 'nowrap' }}>
                   Inlet sealed
                 </Button>
               )}
             >
-              Remove the nozzle, fit seal ID {activeRunSnapshot.current?.seal_fixture_id ?? settings.defaultSealFixtureId}, then continue to the sealed measurement.
+              {connected
+                ? `Remove the nozzle, fit seal ID ${activeRunSnapshot.current?.seal_fixture_id ?? settings.defaultSealFixtureId}, then continue to the sealed measurement.`
+                : 'Reconnect the tester before continuing this recovered run.'}
             </Alert>
           )}
           {progress ? (
@@ -1525,14 +1587,19 @@ export function CartridgeSubassemblyPage() {
           <MeasurementTable measurements={measurements} />
           <MeasurementHistograms measurements={measurements} guidance={guidance} />
           <MeasurementDetails measurements={measurements} />
+          {!connected && (
+            <Alert severity="info">
+              Reconnect the tester before using solenoid controls or confirming removal.
+            </Alert>
+          )}
           <Stack direction="row" spacing={1}>
-            <Button startIcon={<LockOpenIcon />} onClick={unlockForRemoval}>
+            <Button startIcon={<LockOpenIcon />} onClick={unlockForRemoval} disabled={!connected}>
               Unlock for removal
             </Button>
-            <Button startIcon={<LockIcon />} onClick={lockSolenoid}>
+            <Button startIcon={<LockIcon />} onClick={lockSolenoid} disabled={!connected}>
               Lock solenoid
             </Button>
-            <Button variant="contained" startIcon={<DownloadDoneIcon />} onClick={confirmRemoved}>
+            <Button variant="contained" startIcon={<DownloadDoneIcon />} onClick={confirmRemoved} disabled={!connected}>
               Confirm removed
             </Button>
           </Stack>
@@ -1738,8 +1805,8 @@ function HistoricalRecordsPanel(props: {
   const [appVersionFilter, setAppVersionFilter] = useState('all')
   const [resultFilter, setResultFilter] = useState<'all' | CartridgeHistoryResult>('all')
   const allRuns = useMemo(() => buildCartridgeHistoryRuns(props.records.events), [props.records.events])
-  const operatorOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.operator)), [allRuns])
-  const productionBatchOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.productionBatch)), [allRuns])
+  const operatorOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.operator ?? 'unknown')), [allRuns])
+  const productionBatchOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.productionBatch ?? 'unknown')), [allRuns])
   const appVersionOptions = useMemo(() => uniqueStrings(allRuns.map((run) => run.appVersion ?? 'unknown')), [allRuns])
   const filteredRuns = useMemo(() => {
     return filterCartridgeHistoryRuns(allRuns, {
@@ -1965,12 +2032,13 @@ function CartridgeHistoryRunRow({ run }: { run: CartridgeHistoryRun }) {
                 {run.cartridgeSerial ?? 'Unknown cartridge'}
               </Typography>
               <Chip size="small" label={resultLabel} color={historyResultChipColor(result)} />
+              <Chip size="small" label={appVersion} variant="outlined" />
             </Stack>
             <Typography variant="caption" color="text.secondary">
               {formatTimestamp(run.completedAt)}
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-              {run.operator ?? 'Unknown operator'} | {run.productionBatch ?? 'No production batch'} | {appVersion}
+              {run.operator ?? 'Unknown operator'} | {run.productionBatch ?? 'No production batch'}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Attempt {run.attemptIndex}/{run.attemptCount} | {run.eventCount} events
@@ -2474,13 +2542,15 @@ function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: b
   const markerColor = ratioColor(ratio) ?? 'text.secondary'
 
   return (
-    <Box>
-      <Box sx={{ position: 'relative', height: dense ? 22 : 30 }}>
-        <Box sx={{ position: 'absolute', left: 0, right: 0, top: 11, height: 8, bgcolor: 'success.light', borderRadius: 1 }} />
-        <Box sx={{ position: 'absolute', left: `${borderlinePct}%`, right: `${100 - suspectPct}%`, top: 11, height: 8, bgcolor: 'warning.light' }} />
-        <Box sx={{ position: 'absolute', left: `${suspectPct}%`, right: 0, top: 11, height: 8, bgcolor: 'error.light', borderTopRightRadius: 4, borderBottomRightRadius: 4 }} />
-        {!dense && <ThresholdMark percent={borderlinePct} label="0.25" />}
-        {!dense && <ThresholdMark percent={suspectPct} label="0.28" />}
+    <Box
+      aria-label="Sealed/open ratio gauge. Accept below 0.25, borderline from 0.25 to below 0.28, suspect at 0.28 and above."
+    >
+      <Box sx={{ position: 'relative', height: dense ? 20 : 24 }}>
+        <Box sx={{ position: 'absolute', left: 0, right: 0, top: dense ? 6 : 8, height: 8, bgcolor: 'success.light', borderRadius: 1 }} />
+        <Box sx={{ position: 'absolute', left: `${borderlinePct}%`, right: `${100 - suspectPct}%`, top: dense ? 6 : 8, height: 8, bgcolor: 'warning.light' }} />
+        <Box sx={{ position: 'absolute', left: `${suspectPct}%`, right: 0, top: dense ? 6 : 8, height: 8, bgcolor: 'error.light', borderTopRightRadius: 4, borderBottomRightRadius: 4 }} />
+        <ThresholdTick percent={borderlinePct} dense={dense} />
+        <ThresholdTick percent={suspectPct} dense={dense} />
         {valuePct !== undefined && !offScaleLow && !offScaleHigh && (
           <Box
             sx={{
@@ -2497,13 +2567,28 @@ function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: b
         {offScaleLow && <OffScaleRatioArrow side="left" color={markerColor} />}
         {offScaleHigh && <OffScaleRatioArrow side="right" color={markerColor} />}
       </Box>
-      <Stack direction="row" justifyContent="space-between" spacing={1}>
-        <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MIN.toFixed(2)}</Typography>
-        {!dense && <Typography variant="caption" color="success.main">Accept range</Typography>}
-        <Typography variant="caption" color="warning.main">{dense ? '0.25 / 0.28' : 'Borderline band'}</Typography>
-        {!dense && <Typography variant="caption" color="error.main">Suspect band</Typography>}
-        <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MAX.toFixed(2)}</Typography>
-      </Stack>
+      {!dense && (
+        <>
+          <Stack direction="row" justifyContent="space-between" spacing={1}>
+            <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MIN.toFixed(2)}</Typography>
+            <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MAX.toFixed(2)}</Typography>
+          </Stack>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.25, rowGap: 0.25, mt: 0.25 }}>
+            <RatioBandLegend color="success.light" label="Accept < 0.25" />
+            <RatioBandLegend color="warning.light" label="Borderline 0.25-0.28" />
+            <RatioBandLegend color="error.light" label="Suspect >= 0.28" />
+          </Box>
+        </>
+      )}
+      {dense && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', mt: -0.25, fontSize: 10, lineHeight: 1.2, textAlign: 'center' }}
+        >
+          thresholds 0.25 / 0.28
+        </Typography>
+      )}
     </Box>
   )
 }
@@ -2530,14 +2615,32 @@ function OffScaleRatioArrow({ side, color }: { side: 'left' | 'right'; color: st
   )
 }
 
-function ThresholdMark({ percent, label }: { percent: number; label: string }) {
+function ThresholdTick({ percent, dense }: { percent: number; dense: boolean }) {
   return (
-    <Box sx={{ position: 'absolute', left: `${percent}%`, top: 0, transform: 'translateX(-50%)' }}>
-      <Box sx={{ width: 1, height: 26, bgcolor: 'text.secondary', opacity: 0.55, mx: 'auto' }} />
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+    <Box
+      aria-hidden="true"
+      sx={{
+        position: 'absolute',
+        left: `${percent}%`,
+        top: dense ? 2 : 1,
+        width: 2,
+        height: dense ? 16 : 22,
+        bgcolor: 'common.black',
+        opacity: 0.68,
+        transform: 'translateX(-1px)',
+      }}
+    />
+  )
+}
+
+function RatioBandLegend({ color, label }: { color: string; label: string }) {
+  return (
+    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+      <Box sx={{ width: 18, height: 3, bgcolor: color, borderRadius: 0.5, flex: '0 0 auto' }} />
+      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
         {label}
       </Typography>
-    </Box>
+    </Stack>
   )
 }
 
@@ -2802,6 +2905,7 @@ function LogBlock({ lines, empty, maxHeight = 260 }: { lines: string[]; empty: s
         fontSize: 12,
         lineHeight: 1.55,
         whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
       }}
     >
       {lines.length ? lines.join('\n') : empty}
@@ -2830,11 +2934,11 @@ function DetailRow({
   valueColor?: string
 }) {
   return (
-    <Stack direction="row" justifyContent="space-between" spacing={2}>
-      <Typography variant="body2" color="text.secondary">
+    <Stack direction="row" justifyContent="space-between" spacing={2} sx={{ minWidth: 0 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ flex: '0 0 auto' }}>
         {label}
       </Typography>
-      <Typography variant="body2" color={valueColor ?? 'text.primary'} textAlign="right">
+      <Typography variant="body2" color={valueColor ?? 'text.primary'} textAlign="right" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
         {value}
       </Typography>
     </Stack>

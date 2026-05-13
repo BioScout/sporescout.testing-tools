@@ -1408,8 +1408,8 @@ function buildBrowserMockSamples(slpm: number): number[] {
 function scheduleBrowserSolenoidRelock(lockAfterMs?: number): void {
   clearBrowserSolenoidRelockTimer()
   const delayMs = typeof lockAfterMs === 'number' && Number.isFinite(lockAfterMs)
-    ? Math.min(45000, Math.max(1000, Math.trunc(lockAfterMs)))
-    : 45000
+    ? Math.min(20000, Math.max(1000, Math.trunc(lockAfterMs)))
+    : 20000
   browserSolenoidRelockTimer = window.setTimeout(() => {
     browserSolenoidRelockTimer = undefined
     void browserApi.sendCommand('solenoid Lock')

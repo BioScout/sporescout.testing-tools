@@ -158,8 +158,8 @@ export function filterCartridgeHistoryRuns(
 ): CartridgeHistoryRun[] {
   const attemptScopedRuns = filters.attemptView === 'latest' ? latestRunsByCartridge(runs) : runs
   return attemptScopedRuns.filter((run) => {
-    if (filters.operator && filters.operator !== 'all' && run.operator !== filters.operator) return false
-    if (filters.productionBatch && filters.productionBatch !== 'all' && run.productionBatch !== filters.productionBatch) return false
+    if (filters.operator && filters.operator !== 'all' && (run.operator ?? 'unknown') !== filters.operator) return false
+    if (filters.productionBatch && filters.productionBatch !== 'all' && (run.productionBatch ?? 'unknown') !== filters.productionBatch) return false
     if (filters.appVersion && filters.appVersion !== 'all' && (run.appVersion ?? 'unknown') !== filters.appVersion) return false
     if (filters.result && filters.result !== 'all' && cartridgeHistoryResult(run) !== filters.result) return false
     return true

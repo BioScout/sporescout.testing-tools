@@ -13,9 +13,9 @@
 - Real writable worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.testing-tools
 - Paired firmware worktree: C:\sporescout-worktrees\bau\phase-1-cartridge-subassembly-tester-p01\sporescout.msom
 - Reference docs: C:\GitHub\sporescout.agents
-- Current-thread approved real device: SS-A-001-101A-0112 only.
-- Approved device details: Particle id 0a10aced202194944a087ec4, Particle product id 33608, SSH alias SS-A-001-101A-0112. No local serial port is currently connected or approved for this device in this thread.
-- Exact-port validation path: only use a local serial port if the user explicitly provides and approves the exact port for SS-A-001-101A-0112 in this thread.
+- Current-thread approved real device: none for this setup/orientation UI patch.
+- Approved device details: none for this thread. Previous handoff context mentioned SS-A-001-101A-0112, but this thread has not approved new commands, flashing, SSH, serial, or validation against it.
+- Exact-port validation path: only use a local serial port if the user explicitly provides and approves the exact target device and exact port in this thread.
 - Forbidden device behavior: do not probe, list-test, flash, reboot, command, SSH, serial-connect, or inspect any other real device.
 
 ## Approved Scope
@@ -221,3 +221,15 @@
   - Bumped the visible GUI version to `0.16.0` / `App v0.16`.
   - Local validation passed: `npm test` 49/49, `npm run typecheck`, packaged all-mode linear-stage smoke, packaged seeded cartridge-history smoke with a fake exact serial port, launcher stale-local refusal check, and `npm run dist:portable`.
   - Post-push GitHub Actions artifact verification is still required for the new v0.16 commit.
+- 2026-05-13: Operator feedback pass implemented without real-device interaction:
+  - Replaced ratio gauge boundary boxes/overlapping threshold labels with black threshold ticks plus separated legend text; dense history gauges now retain compact threshold labels.
+  - Hardened recovered cartridge runs so reconnect readiness restores the active phase instead of resetting to insert, open-phase recovery without a firmware `run_uid` forces a fresh scan, stale hydration is ignored, and cancel clears cartridge/measurement state.
+  - Disabled solenoid/removal controls while disconnected and clarified recovered-complete copy.
+  - Made long history/detail strings wrap safely, surfaced app version as a chip in history rows, and allowed unknown operator/batch filtering.
+  - Reduced timed solenoid unlock relock from 45 seconds to 20 seconds in Electron, browser/mock fallback, and cartridge UI copy.
+  - Local validation passed: `npm run typecheck`, focused cartridge/workflow/contracts tests (30/30), `npm run build`, packaged-style Electron cartridge render smoke with fake exact serial port, and browser/mock visual check confirming no remove-step gauge label overlap at 845x706.
+- 2026-05-13: User approved on-device cartridge tester validation for SS-A-001-101A-0112 only on COM4. No flashing or cartridge measurement runs were performed. Exact-port Electron validation passed:
+  - `test cartridge_leak prepare` returned READY with firmware `9003003`, hardware `101A`, CM4 ready, idle, tester power ready, station self-check OK, and solenoid locked.
+  - Timed unlock/relock passed: `unlockSolenoidForRemoval(20000)` reported unlocked, then `solenoid IsUnlocked` returned `false` after a 23.3 second wait.
+  - Shutdown relock passed using renderer `window.close()` while the timed unlock was pending; relaunching on COM4 and checking before any explicit lock command returned `solenoid IsUnlocked: false`.
+  - Recovered active run validation passed: seeded a `fit_nozzle` cartridge context, connected on COM4, readiness ran, and the UI stayed on the recovered `Fit nozzle` step instead of resetting to Insert.

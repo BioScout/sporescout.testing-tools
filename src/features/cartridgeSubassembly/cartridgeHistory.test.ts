@@ -127,6 +127,26 @@ describe('cartridge history normalization', () => {
     expect(filterCartridgeHistoryRuns(allRuns, { attemptView: 'latest', result: 'accept' }).map((run) => run.runUid)).toEqual(['run-new'])
   })
 
+  it('filters missing operator and production batch metadata as unknown', () => {
+    const allRuns = buildCartridgeHistoryRuns([
+      storedEvent({
+        id: 'evt-known-metadata',
+        createdAt: '2026-05-12T01:00:00.000Z',
+        data: { cart: 'SS-SA-007-030-0171', run: 'run-known', g: 'ACCEPT_SINGLE_PASS', r: { so: 0.2 }, o: { slpm: 14 }, s: { slpm: 2.8 } },
+      }),
+      storedEvent({
+        id: 'evt-missing-metadata',
+        createdAt: '2026-05-12T02:00:00.000Z',
+        operator: null,
+        batch: null,
+        data: { cart: 'SS-SA-007-030-0172', run: 'run-missing', g: 'ACCEPT_SINGLE_PASS', r: { so: 0.21 }, o: { slpm: 14 }, s: { slpm: 2.94 } },
+      }),
+    ])
+
+    expect(filterCartridgeHistoryRuns(allRuns, { operator: 'unknown' }).map((run) => run.runUid)).toEqual(['run-missing'])
+    expect(filterCartridgeHistoryRuns(allRuns, { productionBatch: 'unknown' }).map((run) => run.runUid)).toEqual(['run-missing'])
+  })
+
   it('keeps repeat quality sticky when later events invalidate an earlier acceptable run', () => {
     const runs = buildCartridgeHistoryRuns([
       measurementEvent('evt-open-ok', 'run-repeat', 'open', 14.1, '2026-05-12T04:00:00.000Z'),
@@ -234,6 +254,8 @@ function storedEvent(input: {
   appVersion?: string
   eventName?: string
   workflow?: string | null
+  operator?: string | null
+  batch?: string | null
 }): StoredMirroredEventRecord {
   const runUid = typeof input.data.run === 'string' ? input.data.run : typeof input.data.run_uid === 'string' ? input.data.run_uid : undefined
   const cartridgeSerial = typeof input.data.cart === 'string'
@@ -250,8 +272,8 @@ function storedEvent(input: {
     run_uid: runUid,
     cartridge_serial: cartridgeSerial,
     station_id: 'STATION-001',
-    operator: 'Harry Blake',
-    batch: 'P1-STAGE-2026-05',
+    operator: input.operator === null ? undefined : input.operator ?? 'Harry Blake',
+    batch: input.batch === null ? undefined : input.batch ?? 'P1-STAGE-2026-05',
     tester_device_serial: 'SS-A-001-101A-0122',
     enclosure_base_id: 'SS-P-001-010-0085',
     nozzle_id: 'NOZL-0001',
