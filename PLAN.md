@@ -233,3 +233,4 @@
   - Timed unlock/relock passed: `unlockSolenoidForRemoval(20000)` reported unlocked, then `solenoid IsUnlocked` returned `false` after a 23.3 second wait.
   - Shutdown relock passed using renderer `window.close()` while the timed unlock was pending; relaunching on COM4 and checking before any explicit lock command returned `solenoid IsUnlocked: false`.
   - Recovered active run validation passed: seeded a `fit_nozzle` cartridge context, connected on COM4, readiness ran, and the UI stayed on the recovered `Fit nozzle` step instead of resetting to Insert.
+- 2026-05-13: Testing Tools commit `67cedbeab24f` was pushed. GitHub Actions Release workflow run `25776170963` completed successfully, including tests, build, portable packaging, packaged linear-stage smoke, packaged cartridge history smoke, and artifact upload. `.\scripts\launch-windows.ps1 -VerifyDownloadAvailability` verified the checked-out-commit artifact `sporescout-testing-tools-portable`.

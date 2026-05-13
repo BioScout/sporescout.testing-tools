@@ -17,6 +17,7 @@
 - Device rule: do not interact with any real device unless the user explicitly approves the exact target in this thread. Never choose an alternate device autonomously.
 - Current validation state: no-device desktop validation passed for the cartridge UI patch, and the approved COM4 validation on SS-A-001-101A-0112 passed for the hardware-adjacent solenoid/recovery paths listed below.
 - 2026-05-13 cartridge validation on SS-A-001-101A-0112 / COM4 passed for readiness, 20 second timed solenoid relock, shutdown relock during a pending timed unlock, and recovered `fit_nozzle` UI restore. No cartridge measurement command, flash, SSH, or Particle command was run.
+- Commit `67cedbeab24f` is pushed and has verified Release workflow artifact `sporescout-testing-tools-portable` from run `25776170963`.
 
 ## Implementation Notes
 
