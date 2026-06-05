@@ -168,6 +168,9 @@ export function filterCartridgeHistoryRuns(
 
 export function cartridgeHistoryResult(run: CartridgeHistoryRun): CartridgeHistoryResult {
   if (run.sampleQuality === 'repeat') return 'repeat'
+  if (typeof run.sealedOpenRatio === 'number') {
+    return run.sealedOpenRatio < 0.30 ? 'accept' : 'suspect'
+  }
   switch (run.guidance) {
     case 'ACCEPT_SINGLE_PASS':
       return 'accept'
@@ -179,10 +182,7 @@ export function cartridgeHistoryResult(run: CartridgeHistoryRun): CartridgeHisto
     case 'REPEAT_INVALID_RATIO':
       return 'repeat'
     default:
-      if (typeof run.sealedOpenRatio !== 'number') return 'unknown'
-      if (run.sealedOpenRatio < 0.25) return 'accept'
-      if (run.sealedOpenRatio < 0.28) return 'borderline'
-      return 'suspect'
+      return 'unknown'
   }
 }
 

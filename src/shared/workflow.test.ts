@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GuiResponseEnvelope } from './contracts'
+import type { GuiResponseEnvelope, MeasurementSummary, TestPhase } from './contracts'
 import {
   applyCartridgeReadinessResult,
   buildCartridgeOpenCommand,
@@ -258,6 +258,22 @@ describe('cartridge workflow helpers', () => {
     expect(guidance.guidance).toBe('RESEAT_AND_REPEAT_SUSPECT_FAIL')
   })
 
+  it('uses 0.30 as the Phase 1 pass/fail repeat threshold', () => {
+    const acceptable = deriveGuidanceFromMeasurements({
+      open: measurement('open', 10),
+      sealed: measurement('sealed', 2.99),
+    })
+    const suspect = deriveGuidanceFromMeasurements({
+      open: measurement('open', 10),
+      sealed: measurement('sealed', 3.0),
+    })
+
+    expect(acceptable.sealedOpenRatio).toBeCloseTo(0.299)
+    expect(acceptable.guidance).toBe('ACCEPT_SINGLE_PASS')
+    expect(suspect.sealedOpenRatio).toBeCloseTo(0.3)
+    expect(suspect.guidance).toBe('RESEAT_AND_REPEAT_SUSPECT_FAIL')
+  })
+
   it('does not accept a low-ratio measurement when a phase is invalid', () => {
     const guidance = deriveGuidanceFromMeasurements({
       open: {
@@ -303,3 +319,23 @@ describe('cartridge workflow helpers', () => {
     expect(guidance.guidance).toBe('REPEAT_MEASUREMENT_QUALITY')
   })
 })
+
+function measurement(phase: TestPhase, slpm: number): MeasurementSummary {
+  return {
+    phase,
+    sample_count: 30,
+    slpm,
+    raw_mean_slpm: slpm,
+    median_slpm: slpm,
+    stddev_slpm: 0.1,
+    min_slpm: slpm - 0.2,
+    max_slpm: slpm + 0.2,
+    trimmed_count: 24,
+    outlier_count: 0,
+    coefficient_of_variation: 0.01,
+    sample_quality: 'acceptable',
+    settle_ms: 12000,
+    dt_ms: 100,
+    flow_slpm_samples: [],
+  }
+}

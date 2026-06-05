@@ -23,7 +23,7 @@ export const DEFAULT_STATION_SETTINGS: StationSettings = {
 
 export const ENGINEERING_PASSWORD = 'Banana12!'
 export const CARTRIDGE_PROFILE = 'phase1-characterization'
-export const CARTRIDGE_PROFILE_VERSION = 'phase1-characterization.v2'
+export const CARTRIDGE_PROFILE_VERSION = 'phase1-characterization.v3'
 export const CARTRIDGE_READINESS_COMMAND = 'test cartridge_leak prepare'
 export const LINEAR_STAGE_READINESS_COMMAND = 'test linear_stage prepare'
 export type LinearStageMode = 'full' | 'mechanics' | 'optics'

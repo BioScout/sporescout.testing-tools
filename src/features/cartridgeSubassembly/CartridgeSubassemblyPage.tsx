@@ -2529,28 +2529,24 @@ function Metric({ label, value, color }: { label: string; value: string; color?:
 
 const RATIO_AXIS_MIN = 0.10
 const RATIO_AXIS_MAX = 0.40
-const RATIO_ACCEPT_MAX = 0.25
-const RATIO_SUSPECT_MIN = 0.28
+const RATIO_PASS_FAIL = 0.30
 
 function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: boolean }) {
   const range = RATIO_AXIS_MAX - RATIO_AXIS_MIN
   const valuePct = typeof ratio === 'number' ? clamp(((ratio - RATIO_AXIS_MIN) / range) * 100, 0, 100) : undefined
   const offScaleLow = typeof ratio === 'number' && ratio < RATIO_AXIS_MIN
   const offScaleHigh = typeof ratio === 'number' && ratio > RATIO_AXIS_MAX
-  const borderlinePct = clamp(((RATIO_ACCEPT_MAX - RATIO_AXIS_MIN) / range) * 100, 0, 100)
-  const suspectPct = clamp(((RATIO_SUSPECT_MIN - RATIO_AXIS_MIN) / range) * 100, 0, 100)
+  const passFailPct = clamp(((RATIO_PASS_FAIL - RATIO_AXIS_MIN) / range) * 100, 0, 100)
   const markerColor = ratioColor(ratio) ?? 'text.secondary'
 
   return (
     <Box
-      aria-label="Sealed/open ratio gauge. Accept below 0.25, borderline from 0.25 to below 0.28, suspect at 0.28 and above."
+      aria-label="Sealed/open ratio gauge. Accept below 0.30, suspect at 0.30 and above."
     >
       <Box sx={{ position: 'relative', height: dense ? 20 : 24 }}>
         <Box sx={{ position: 'absolute', left: 0, right: 0, top: dense ? 6 : 8, height: 8, bgcolor: 'success.light', borderRadius: 1 }} />
-        <Box sx={{ position: 'absolute', left: `${borderlinePct}%`, right: `${100 - suspectPct}%`, top: dense ? 6 : 8, height: 8, bgcolor: 'warning.light' }} />
-        <Box sx={{ position: 'absolute', left: `${suspectPct}%`, right: 0, top: dense ? 6 : 8, height: 8, bgcolor: 'error.light', borderTopRightRadius: 4, borderBottomRightRadius: 4 }} />
-        <ThresholdTick percent={borderlinePct} dense={dense} />
-        <ThresholdTick percent={suspectPct} dense={dense} />
+        <Box sx={{ position: 'absolute', left: `${passFailPct}%`, right: 0, top: dense ? 6 : 8, height: 8, bgcolor: 'error.light', borderTopRightRadius: 4, borderBottomRightRadius: 4 }} />
+        <ThresholdTick percent={passFailPct} dense={dense} />
         {valuePct !== undefined && !offScaleLow && !offScaleHigh && (
           <Box
             sx={{
@@ -2574,9 +2570,8 @@ function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: b
             <Typography variant="caption" color="text.secondary">{RATIO_AXIS_MAX.toFixed(2)}</Typography>
           </Stack>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.25, rowGap: 0.25, mt: 0.25 }}>
-            <RatioBandLegend color="success.light" label="Accept < 0.25" />
-            <RatioBandLegend color="warning.light" label="Borderline 0.25-0.28" />
-            <RatioBandLegend color="error.light" label="Suspect >= 0.28" />
+            <RatioBandLegend color="success.light" label="Accept < 0.30" />
+            <RatioBandLegend color="error.light" label="Suspect >= 0.30" />
           </Box>
         </>
       )}
@@ -2586,7 +2581,7 @@ function RatioThresholdBar({ ratio, dense = false }: { ratio?: number; dense?: b
           color="text.secondary"
           sx={{ display: 'block', mt: -0.25, fontSize: 10, lineHeight: 1.2, textAlign: 'center' }}
         >
-          thresholds 0.25 / 0.28
+          0.30
         </Typography>
       )}
     </Box>
@@ -3015,8 +3010,7 @@ function guidanceColor(guidance?: string): string {
 
 function ratioColor(ratio?: number): string | undefined {
   if (typeof ratio !== 'number') return undefined
-  if (ratio < 0.25) return 'success.main'
-  if (ratio < 0.28) return 'warning.main'
+  if (ratio < 0.30) return 'success.main'
   return 'error.main'
 }
 

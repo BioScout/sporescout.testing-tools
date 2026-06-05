@@ -71,7 +71,7 @@ describe('cartridge history normalization', () => {
     expect(runs[0].appVersion).toBe('0.15.0')
     expect(runs[0].measurements.open?.flow_slpm_samples).toEqual([14, 14.1, 14.2])
     expect(runs[0].sealedOpenRatio).toBeCloseTo(0.255319)
-    expect(cartridgeHistoryResult(runs[0])).toBe('borderline')
+    expect(cartridgeHistoryResult(runs[0])).toBe('accept')
   })
 
   it('summarizes latest attempts separately from all attempts', () => {

@@ -276,17 +276,9 @@ export function deriveGuidanceFromMeasurements(measurements: Record<string, Meas
     }
   }
 
-  if (sealedOpenRatio < 0.25) {
+  if (sealedOpenRatio < 0.30) {
     return {
       guidance: 'ACCEPT_SINGLE_PASS',
-      sealedOpenRatio,
-      sampleQuality,
-    }
-  }
-
-  if (sealedOpenRatio < 0.28) {
-    return {
-      guidance: 'RESEAT_AND_REPEAT_BORDERLINE',
       sealedOpenRatio,
       sampleQuality,
     }
