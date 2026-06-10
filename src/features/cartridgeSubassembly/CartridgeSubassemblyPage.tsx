@@ -488,7 +488,7 @@ export function CartridgeSubassemblyPage() {
               if (!isCurrentOperation(token)) return
               if (!solenoidLocked) return
             }
-            finishReadinessAfterReady()
+            finishReadinessAfterReady(result.response.result)
             return
           }
         }
@@ -509,13 +509,20 @@ export function CartridgeSubassemblyPage() {
       }
     }
 
-    finishReadinessAfterReady()
+    finishReadinessAfterReady(response.result)
   }
 
-  function finishReadinessAfterReady() {
+  function finishReadinessAfterReady(result?: unknown) {
     setFaultText('')
     const activeRun = activeRunSnapshot.current
     if (activeRun?.workflow === 'cartridge_subassembly' && activeRun.run_uid) {
+      if (readinessReportsNoActiveRun(result)) {
+        clearActiveRunState(`Cleared recovered run_uid ${activeRun.run_uid}; firmware reports no active cartridge run.`)
+        setDeviceStatus('Ready')
+        setCurrentStep('insert')
+        setRecoveredRunNotice('Previous app run was stale; firmware reports no active cartridge run. Start this cartridge again from insert/scan.')
+        return
+      }
       restoreRecoveredRun(activeRun)
       return
     }
@@ -954,6 +961,30 @@ export function CartridgeSubassemblyPage() {
       : 'Cartridge removed. Bay empty for next cartridge.')
   }
 
+  function clearActiveRunState(nextLatestAction: string) {
+    void api.setActiveRunContext(undefined)
+    activeRunSnapshot.current = null
+    setRecoveredRunNotice('')
+    setCartridgeInput('')
+    setCartridgeSerial('')
+    setRunUid('')
+    setMeasurements({})
+    setGuidance({})
+    setFaultText('')
+    setTestStage('idle')
+    setLatestAction(nextLatestAction)
+  }
+
+  function clearRecoveredRunOnly() {
+    const staleRunUid = runUid
+    invalidateOperation()
+    clearActiveRunState(staleRunUid
+      ? `Cleared recovered run_uid ${staleRunUid} from this app. No device command was sent.`
+      : 'Cleared recovered cartridge run from this app. No device command was sent.')
+    setDeviceStatus('Ready')
+    setCurrentStep('insert')
+  }
+
   function nextCartridge() {
     invalidateOperation()
     setCartridgeInput('')
@@ -1020,24 +1051,21 @@ export function CartridgeSubassemblyPage() {
     invalidateOperation()
     const result = await api.sendCommand(`test cartridge_leak cancel ${runUid}`)
     if (!result.accepted || result.timedOut || result.response?.ok !== true) {
+      if (cancelResponseMeansNoActiveRun(result)) {
+        clearActiveRunState(`Cleared stale run_uid ${runUid}; firmware had no active cartridge run to cancel.`)
+        setDeviceStatus('Ready')
+        setCurrentStep('insert')
+        return true
+      }
       setFaultText(result.response?.error ?? result.error ?? 'Cancel command failed.')
       setDeviceStatus('Fault')
       return false
     }
 
-    await api.setActiveRunContext(undefined)
-    activeRunSnapshot.current = null
-    setRecoveredRunNotice('')
-    setCartridgeInput('')
-    setCartridgeSerial('')
-    setMeasurements({})
-    setGuidance({})
-    setFaultText('')
+    clearActiveRunState(`Cancelled run_uid ${runUid}.`)
     setTestStage('idle')
     setDeviceStatus('Ready')
     setCurrentStep('insert')
-    setLatestAction(`Cancelled run_uid ${runUid}.`)
-    setRunUid('')
     return true
   }
 
@@ -1529,9 +1557,19 @@ export function CartridgeSubassemblyPage() {
             <Alert
               severity="info"
               action={(
-                <Button color="inherit" size="small" onClick={continueNozzleMeasurement} disabled={!connected} sx={{ minWidth: 110, whiteSpace: 'nowrap' }}>
-                  Nozzle fitted
-                </Button>
+                <Stack direction="row" spacing={1}>
+                  {recoveredRunNotice && (
+                    <Button color="inherit" size="small" onClick={clearRecoveredRunOnly} sx={{ whiteSpace: 'nowrap' }}>
+                      Clear recovered run
+                    </Button>
+                  )}
+                  <Button color="inherit" size="small" onClick={cancelActiveRun} disabled={!runUid} sx={{ whiteSpace: 'nowrap' }}>
+                    Cancel run
+                  </Button>
+                  <Button color="inherit" size="small" onClick={continueNozzleMeasurement} disabled={!connected} sx={{ minWidth: 110, whiteSpace: 'nowrap' }}>
+                    Nozzle fitted
+                  </Button>
+                </Stack>
               )}
             >
               {connected
@@ -1543,9 +1581,19 @@ export function CartridgeSubassemblyPage() {
             <Alert
               severity="info"
               action={(
-                <Button color="inherit" size="small" onClick={continueSealedMeasurement} disabled={!connected} sx={{ minWidth: 98, whiteSpace: 'nowrap' }}>
-                  Inlet sealed
-                </Button>
+                <Stack direction="row" spacing={1}>
+                  {recoveredRunNotice && (
+                    <Button color="inherit" size="small" onClick={clearRecoveredRunOnly} sx={{ whiteSpace: 'nowrap' }}>
+                      Clear recovered run
+                    </Button>
+                  )}
+                  <Button color="inherit" size="small" onClick={cancelActiveRun} disabled={!runUid} sx={{ whiteSpace: 'nowrap' }}>
+                    Cancel run
+                  </Button>
+                  <Button color="inherit" size="small" onClick={continueSealedMeasurement} disabled={!connected} sx={{ minWidth: 98, whiteSpace: 'nowrap' }}>
+                    Inlet sealed
+                  </Button>
+                </Stack>
               )}
             >
               {connected
@@ -3069,6 +3117,34 @@ function formatTimestamp(value?: string): string {
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))].sort()
+}
+
+function readinessReportsNoActiveRun(result: unknown): boolean {
+  const response = asRecord(result)
+  const checks = asRecord(response.checks)
+  const rawCheck = checks.active_run_clear ?? response.check_active_run_clear
+  if (rawCheck === 1 || rawCheck === true) return true
+
+  const check = asRecord(rawCheck)
+  return check.ok === true
+}
+
+function cancelResponseMeansNoActiveRun(result: {
+  response?: { error?: string; result?: unknown }
+  error?: string
+}): boolean {
+  const resultRecord = asRecord(result.response?.result)
+  const message = [
+    result.response?.error,
+    result.error,
+    typeof result.response?.result === 'string' ? result.response.result : undefined,
+    typeof resultRecord.message === 'string' ? resultRecord.message : undefined,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  return message.includes('no active cartridge_leak run') || message.includes('no active run')
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
