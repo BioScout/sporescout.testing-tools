@@ -121,7 +121,6 @@ try {
     const text = document.body?.innerText.toLowerCase() ?? '';
     return [
       'operator-guided cartridge leak characterization.',
-      'app v0.16',
       'operator',
       'batch',
       'tester serial',
@@ -132,7 +131,7 @@ try {
       'insert cartridge',
       'current run',
       'cartridge history',
-    ].every((label) => text.includes(label));
+    ].every((label) => text.includes(label)) && /\bapp v\d+\.\d+\b/.test(text);
   })()`)
 
   const expectedHistoryText = (process.env.SPORESCOUT_EXPECT_HISTORY_TEXT ?? '')
