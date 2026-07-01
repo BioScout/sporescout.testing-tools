@@ -131,7 +131,7 @@ try {
       'insert cartridge',
       'current run',
       'cartridge history',
-    ].every((label) => text.includes(label)) && /\bapp v\d+\.\d+\b/.test(text);
+    ].every((label) => text.includes(label)) && /\\bapp v\\d+\\.\\d+\\b/.test(text);
   })()`)
 
   const expectedHistoryText = (process.env.SPORESCOUT_EXPECT_HISTORY_TEXT ?? '')
