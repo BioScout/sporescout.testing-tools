@@ -4,54 +4,109 @@ import pathModule from 'node:path'
 const [, , cdpUrl = 'http://127.0.0.1:9225', screenshotPath = 'output/linear-stage-mock-live-feedback.png'] = process.argv
 
 const mechanicalAxisSteps = [
-  'X home switch qualification',
-  'X positive boundary qualification',
-  'X span qualification',
-  'X derated current margin',
-  'X front-limit diagnosis',
-  'Y home switch qualification',
-  'Y positive boundary qualification',
-  'Y span qualification',
-  'Y derated current margin',
-  'Z home switch qualification',
-  'Z positive boundary qualification',
-  'Z span qualification',
-  'Z derated current margin',
+  'X home switch',
+  'X hard limit',
+  'X span',
+  'X current margin',
+  'Y home switch',
+  'Y hard limit',
+  'Y span',
+  'Y current margin',
+  'Z home switch',
+  'Z hard limit',
+  'Z span',
+  'Z current margin',
 ]
 
-const opticalAxisSteps = [
-  'X optical qualification',
-  'Y optical qualification',
-  'Z optical qualification',
+const powerAndSessionWithUpload = [
+  'Enable 5V AUX rail',
+  'Connect 24V AUX',
+  'Enable 24V AUX',
+  'Connect modem',
+  'Wait for CM4 readiness',
+  'Check camera connection',
+  'Check camera image capture',
+  'Check camera LED',
+  'Wait for internet readiness',
+  'Authenticate BioScout API',
+  'Connect steppers',
+  'Start CM4 session',
+  'Initialize steppers',
+]
+
+const powerAndSessionMechanics = [
+  'Enable 5V AUX rail',
+  'Connect 24V AUX',
+  'Enable 24V AUX',
+  'Wait for CM4 readiness',
+  'Connect steppers',
+  'Start CM4 session',
+  'Initialize steppers',
+]
+
+const powerAndSessionWithCamera = [
+  'Enable 5V AUX rail',
+  'Connect 24V AUX',
+  'Enable 24V AUX',
+  'Wait for CM4 readiness',
+  'Check camera connection',
+  'Check camera image capture',
+  'Check camera LED',
+  'Connect steppers',
+  'Start CM4 session',
+  'Initialize steppers',
+]
+
+const scanUploadSteps = [
+  'Scan capture',
+  'Scan audit',
+  'Artifact generation',
+  'Upload',
+]
+
+const cleanupSteps = [
+  'Park/cleanup',
+  'Close CM4 session',
+  'Restore power state',
+  'Linear-stage verdict',
 ]
 
 const expectedPhaseNames = {
-  Full: [
-    'Check dependencies',
-    'CM4 task running',
-    'Initialise Steppers',
+  Production: [
+    ...powerAndSessionWithUpload,
     ...mechanicalAxisSteps,
-    'Select optical region',
-    '3x3 scan audit',
-    ...opticalAxisSteps,
-    'Park Steppers',
+    'Optical region selection',
+    'Home tile capture',
+    'Production workspace stress',
+    'X focus',
+    'Y displacement',
+    'Z displacement',
+    ...scanUploadSteps,
+    'Post-stress recovery',
+    ...cleanupSteps,
   ],
   Mechanics: [
-    'Check dependencies',
-    'CM4 task running',
-    'Initialise Steppers',
+    ...powerAndSessionMechanics,
     ...mechanicalAxisSteps,
-    'Park Steppers',
+    ...cleanupSteps,
   ],
   Optics: [
-    'Check dependencies',
-    'CM4 task running',
-    'Initialise Steppers',
-    'Select optical region',
-    '3x3 scan audit',
-    ...opticalAxisSteps,
-    'Park Steppers',
+    ...powerAndSessionWithCamera,
+    'Optical region selection',
+    'Home tile capture',
+    'Production workspace stress',
+    'X focus',
+    'Y displacement',
+    'Z displacement',
+    'Post-stress recovery',
+    ...cleanupSteps,
   ],
+}
+
+const inProgressText = {
+  Production: 'Production full in progress',
+  Mechanics: 'Mechanics only in progress',
+  Optics: 'Optics only in progress',
 }
 
 function sleep(ms) {
@@ -242,11 +297,11 @@ async function setStageClear(client) {
   if (!checked) throw new Error('Stage-clear checkbox not found or not checked.')
 }
 
-async function selectLinearStageMode(client, shortLabel, expectedCommand) {
+async function selectLinearStageMode(client, shortLabel) {
   await clickButton(client, shortLabel)
   await waitFor(client, `linear-stage mode ${shortLabel}`, `(() => {
     const text = document.body.innerText;
-    return text.includes(${jsString(expectedCommand)}) && text.includes(${jsString(shortLabel)});
+    return text.includes(${jsString(shortLabel)});
   })()`, 10000)
 }
 
@@ -274,9 +329,9 @@ function screenshotPathForMode(basePath, modeLabel) {
   return `${withoutExtension}-${modeLabel.toLowerCase()}${extension}`
 }
 
-async function runMockLinearStageMode(client, modeLabel, expectedCommand, screenshotPath) {
+async function runMockLinearStageMode(client, modeLabel, expectedSessionType, screenshotPath) {
   await resetReviewIfNeeded(client)
-  await selectLinearStageMode(client, modeLabel, expectedCommand)
+  await selectLinearStageMode(client, modeLabel)
   await setStageClear(client)
   await clickButton(client, 'Confirm readiness')
   await waitFor(client, `start enabled for ${modeLabel}`, `(() => {
@@ -286,7 +341,7 @@ async function runMockLinearStageMode(client, modeLabel, expectedCommand, screen
   await clickButton(client, 'Start test')
   await waitFor(client, `live feedback visible for ${modeLabel}`, `(() => {
     const text = document.body.innerText;
-    return text.includes(${jsString(modeLabel === 'Mechanics' ? 'Mechanics-only / no optics in progress' : `${modeLabel === 'Full' ? 'Full test' : 'Optics-only'} in progress`)}) &&
+    return text.includes(${jsString(inProgressText[modeLabel])}) &&
       text.includes('Now') &&
       text.includes('Latest result') &&
       text.includes('Next up') &&
@@ -299,7 +354,9 @@ async function runMockLinearStageMode(client, modeLabel, expectedCommand, screen
       hasReview: text.includes('Review result'),
       hasTrace: text.includes('live trace'),
       hasLatestCompleted: text.includes('Latest completed phase'),
-      hasCommand: text.includes(${jsString(expectedCommand)}),
+      hasCommand: text.includes(${jsString(expectedSessionType)}),
+      hasEvidence: text.includes('Evidence review'),
+      hasCleanEvidence: text.includes('Clean evidence'),
     };
     return { ok: Object.values(flags).every(Boolean), flags };
   })()`, 60000)
@@ -309,28 +366,32 @@ async function runMockLinearStageMode(client, modeLabel, expectedCommand, screen
     const phaseListEnd = text.indexOf('Current context', phaseListStart);
     const phaseText = phaseListStart === -1 ? text : text.slice(phaseListStart, phaseListEnd === -1 ? undefined : phaseListEnd);
     const orderedMarkers = [
-      'CM4 task running',
-      'Initialise Steppers',
-      'X home switch qualification',
-      'Select optical region',
-      '3x3 scan audit',
-      'X optical qualification',
-      'Park Steppers',
+      'Enable 5V AUX rail',
+      'Initialize steppers',
+      'X home switch',
+      'Optical region selection',
+      'Scan audit',
+      'Upload',
+      'Linear-stage verdict',
     ];
     const markerPositions = Object.fromEntries(orderedMarkers.map((marker) => [marker, phaseText.indexOf(marker)]));
     return {
       mode: ${jsString(modeLabel)},
-      command: ${jsString(expectedCommand)},
+      sessionType: ${jsString(expectedSessionType)},
       hasCurrentPhase: text.includes('Now'),
       hasLatestResult: text.includes('Latest result'),
       hasNextUp: text.includes('Next up'),
       hasFullPhaseList: text.includes('Completed, current, and upcoming firmware phases'),
       hasFinalTrace: text.includes('live trace'),
-      hasCommand: text.includes(${jsString(expectedCommand)}),
+      hasCommand: text.includes(${jsString(expectedSessionType)}),
+      hasEvidence: text.includes('Evidence review'),
+      hasCleanEvidence: text.includes('Clean evidence'),
       phaseNames: Array.from(document.querySelectorAll('[data-linear-stage-phase]')).map((node) => node.getAttribute('data-linear-stage-phase')),
       markerPositions,
-      hasMechanicalPhase: phaseText.includes('X home switch qualification'),
-      hasOpticalPhase: phaseText.includes('Select optical region') && phaseText.includes('3x3 scan audit') && phaseText.includes('X optical qualification'),
+      hasMechanicalPhase: phaseText.includes('X home switch'),
+      hasOpticalPhase: phaseText.includes('Optical region selection') && phaseText.includes('X focus') && phaseText.includes('Y displacement') && phaseText.includes('Z displacement'),
+      hasScanUploadPhase: phaseText.includes('Scan capture') && phaseText.includes('Scan audit') && phaseText.includes('Artifact generation') && phaseText.includes('Upload'),
+      hasProductionStress: phaseText.includes('Production workspace stress'),
       excerpt: text.replace(/\\s+/g, ' ').slice(0, 1600),
     };
   })()`)
@@ -374,9 +435,9 @@ try {
   await clickButton(client, 'Connect')
   await waitFor(client, 'clear-stage step visible', `document.body.innerText.includes('Clear stage area') || document.body.innerText.includes('Stage area is clear')`, 60000)
   const modeRuns = [
-    ['Full', 'test linear_stage full'],
-    ['Mechanics', 'test linear_stage mechanics'],
-    ['Optics', 'test linear_stage optics'],
+    ['Production', 'LINEAR_STAGE_COMPREHENSIVE'],
+    ['Mechanics', 'LINEAR_STAGE_MECHANICS'],
+    ['Optics', 'LINEAR_STAGE_OPTICS'],
   ]
   const results = []
   for (const [modeLabel, expectedCommand] of modeRuns) {
@@ -385,16 +446,16 @@ try {
   const result = { runs: results }
   console.log(JSON.stringify(result, null, 2))
   for (const run of results) {
-    if (!run.hasCurrentPhase || !run.hasLatestResult || !run.hasNextUp || !run.hasFullPhaseList || !run.hasFinalTrace || !run.hasCommand) {
+    if (!run.hasCurrentPhase || !run.hasLatestResult || !run.hasNextUp || !run.hasFullPhaseList || !run.hasFinalTrace || !run.hasCommand || !run.hasEvidence || !run.hasCleanEvidence) {
       throw new Error(`${run.mode} live feedback UI did not expose the expected phase/result context.`)
     }
-    if (run.mode === 'Full' && (!run.hasMechanicalPhase || !run.hasOpticalPhase)) {
-      throw new Error('Full mode did not show both mechanical and optical phases.')
+    if (run.mode === 'Production' && (!run.hasMechanicalPhase || !run.hasOpticalPhase || !run.hasScanUploadPhase || !run.hasProductionStress)) {
+      throw new Error('Production mode did not show mechanics, optics, scan/upload, and production stress phases.')
     }
-    if (run.mode === 'Mechanics' && (!run.hasMechanicalPhase || run.hasOpticalPhase)) {
-      throw new Error('Mechanics mode did not restrict the phase list to non-optics checks.')
+    if (run.mode === 'Mechanics' && (!run.hasMechanicalPhase || run.hasOpticalPhase || run.hasScanUploadPhase)) {
+      throw new Error('Mechanics mode did not restrict the phase list to mechanics checks.')
     }
-    if (run.mode === 'Optics' && (run.hasMechanicalPhase || !run.hasOpticalPhase)) {
+    if (run.mode === 'Optics' && (run.hasMechanicalPhase || !run.hasOpticalPhase || run.hasScanUploadPhase)) {
       throw new Error('Optics mode did not restrict the phase list to optics checks.')
     }
     const expected = expectedPhaseNames[run.mode]

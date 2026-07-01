@@ -137,18 +137,18 @@ describe('serial parser', () => {
       data: {
         serial: 'SS-A-001-101A-0013',
         linear_stage_run_id: 'linear-1',
-        linear_stage_mode: 'mechanics',
+        linear_stage_mode: 'mechanics_only',
         result: 'Pass',
       },
     }, undefined, {
       workflow: 'linear_stage',
       tester_device_serial: 'SS-A-001-101A-0013',
       linear_stage_run_id: 'linear-1',
-      linear_stage_mode: 'mechanics',
+      linear_stage_mode: 'mechanics_only',
     })
 
     expect(record.linear_stage_run_id).toBe('linear-1')
-    expect(record.linear_stage_mode).toBe('mechanics')
+    expect(record.linear_stage_mode).toBe('mechanics_only')
     expect(record.tester_device_serial).toBe('SS-A-001-101A-0013')
     expect(record.cartridge_serial).toBeUndefined()
   })
@@ -160,12 +160,12 @@ describe('serial parser', () => {
       data: {
         run_uid: 'firmware-run-1',
         linear_stage_run_id: 'firmware-run-1',
-        linear_stage_mode: 'optics',
+        linear_stage_mode: 'optics_only',
       },
     }, undefined, {
       workflow: 'linear_stage',
       linear_stage_run_id: 'linear-local-1',
-      linear_stage_mode: 'optics',
+      linear_stage_mode: 'optics_only',
     })
 
     expect(record.run_uid).toBe('firmware-run-1')

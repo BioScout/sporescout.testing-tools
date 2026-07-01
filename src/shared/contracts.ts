@@ -26,60 +26,33 @@ export const CARTRIDGE_PROFILE = 'phase1-characterization'
 export const CARTRIDGE_PROFILE_VERSION = 'phase1-characterization.v3'
 export const CARTRIDGE_READINESS_COMMAND = 'test cartridge_leak prepare'
 export const LINEAR_STAGE_READINESS_COMMAND = 'test linear_stage prepare'
-export type LinearStageMode = 'full' | 'mechanics' | 'optics'
+export type LinearStageMode = 'production_full' | 'mechanics_only' | 'optics_only'
+export type LinearStageSessionType =
+  | 'LINEAR_STAGE_COMPREHENSIVE'
+  | 'LINEAR_STAGE_MECHANICS'
+  | 'LINEAR_STAGE_OPTICS'
+
+export const LINEAR_STAGE_MODE_SESSION_TYPES: Record<LinearStageMode, LinearStageSessionType> = {
+  production_full: 'LINEAR_STAGE_COMPREHENSIVE',
+  mechanics_only: 'LINEAR_STAGE_MECHANICS',
+  optics_only: 'LINEAR_STAGE_OPTICS',
+}
+
+export const LINEAR_STAGE_SESSION_TYPE_MODES: Record<LinearStageSessionType, LinearStageMode> = {
+  LINEAR_STAGE_COMPREHENSIVE: 'production_full',
+  LINEAR_STAGE_MECHANICS: 'mechanics_only',
+  LINEAR_STAGE_OPTICS: 'optics_only',
+}
+
+export const LINEAR_STAGE_SUITE_COMMAND = 'test suite'
 export const LINEAR_STAGE_MODE_COMMANDS: Record<LinearStageMode, string> = {
-  full: 'test linear_stage full',
-  mechanics: 'test linear_stage mechanics',
-  optics: 'test linear_stage optics',
+  production_full: `${LINEAR_STAGE_SUITE_COMMAND}({"sessionId":1,"sessionType":"LINEAR_STAGE_COMPREHENSIVE","repeats":1})`,
+  mechanics_only: `${LINEAR_STAGE_SUITE_COMMAND}({"sessionId":1,"sessionType":"LINEAR_STAGE_MECHANICS","repeats":1})`,
+  optics_only: `${LINEAR_STAGE_SUITE_COMMAND}({"sessionId":1,"sessionType":"LINEAR_STAGE_OPTICS","repeats":1})`,
 }
-export const LINEAR_STAGE_OPERATOR_MOTION_COMMANDS = [
-  LINEAR_STAGE_MODE_COMMANDS.full,
-  LINEAR_STAGE_MODE_COMMANDS.mechanics,
-  LINEAR_STAGE_MODE_COMMANDS.optics,
-] as const
-export const LINEAR_STAGE_ENGINEERING_MOTION_COMMANDS = [
-  'test linear_stage',
-  'test step',
-  'test linear_stage_full',
-  'test step_full',
-  'test linear_stage_mechanics',
-  'test step_mechanics',
-  'test linear_stage_optics',
-  'test step_optics',
-  'test linear_stage_production',
-  'test step_production',
-  'test linear_stage_deployment',
-  'test step_deployment',
-  'test linear_stage_legacy',
-  'test step_legacy',
-  'test linear_stage_pair',
-  'test step_pair',
-] as const
-export const LINEAR_STAGE_MOTION_COMMANDS = [
-  ...LINEAR_STAGE_OPERATOR_MOTION_COMMANDS,
-  ...LINEAR_STAGE_ENGINEERING_MOTION_COMMANDS,
-] as const
-export const LINEAR_STAGE_COMMAND_MODE_ALIASES: Record<string, LinearStageMode> = {
-  [LINEAR_STAGE_MODE_COMMANDS.full]: 'full',
-  [LINEAR_STAGE_MODE_COMMANDS.mechanics]: 'mechanics',
-  [LINEAR_STAGE_MODE_COMMANDS.optics]: 'optics',
-  'test linear_stage_full': 'full',
-  'test step_full': 'full',
-  'test linear_stage_mechanics': 'mechanics',
-  'test step_mechanics': 'mechanics',
-  'test linear_stage_optics': 'optics',
-  'test step_optics': 'optics',
-  'test linear_stage': 'full',
-  'test step': 'full',
-  'test linear_stage_production': 'full',
-  'test step_production': 'full',
-  'test linear_stage_deployment': 'full',
-  'test step_deployment': 'full',
-  'test linear_stage_pair': 'full',
-  'test step_pair': 'full',
-  'test linear_stage_legacy': 'full',
-  'test step_legacy': 'full',
-}
+export const LINEAR_STAGE_OPERATOR_MOTION_COMMANDS = Object.values(LINEAR_STAGE_MODE_COMMANDS)
+export const LINEAR_STAGE_ENGINEERING_MOTION_COMMANDS = [] as const
+export const LINEAR_STAGE_MOTION_COMMANDS = LINEAR_STAGE_OPERATOR_MOTION_COMMANDS
 export const LINEAR_STAGE_STAGE_CLEAR_MAX_AGE_MS = 2 * 60 * 1000
 export const LINEAR_STAGE_SAFE_COMMANDS = [
   LINEAR_STAGE_READINESS_COMMAND,
@@ -473,18 +446,16 @@ export function isSealFixtureId(value: string): boolean {
 }
 
 export function isLinearStageMotionCommand(command: string): boolean {
-  const normalized = command.trim().toLowerCase()
-  return LINEAR_STAGE_MOTION_COMMANDS.some((allowed) => allowed.toLowerCase() === normalized)
+  return linearStageModeForCommand(command) !== undefined
 }
 
 export function linearStageModeForCommand(command: string): LinearStageMode | undefined {
-  const normalized = command.trim().toLowerCase()
-  return LINEAR_STAGE_COMMAND_MODE_ALIASES[normalized]
+  const request = parseLinearStageSuiteCommand(command)
+  return request?.mode
 }
 
 export function isCanonicalLinearStageModeCommand(command: string): boolean {
-  const normalized = command.trim().toLowerCase()
-  return LINEAR_STAGE_OPERATOR_MOTION_COMMANDS.some((allowed) => allowed.toLowerCase() === normalized)
+  return parseLinearStageSuiteCommand(command) !== undefined
 }
 
 export function isLinearStageSafeCommand(command: string): boolean {
@@ -587,6 +558,56 @@ export function validateGuiCommand(
   return { ok: false, command: trimmed, error: 'Command is not allowed from the GUI workflow.' }
 }
 
+export function buildLinearStageSuiteCommand(mode: LinearStageMode, sessionId: number, repeats = 1): string {
+  const normalizedSessionId = Math.trunc(sessionId)
+  const normalizedRepeats = Math.trunc(repeats)
+  if (!Number.isFinite(normalizedSessionId) || normalizedSessionId <= 0) {
+    throw new Error('Linear-stage suite session id must be a positive integer.')
+  }
+  if (!Number.isFinite(normalizedRepeats) || normalizedRepeats <= 0) {
+    throw new Error('Linear-stage suite repeats must be a positive integer.')
+  }
+
+  return `${LINEAR_STAGE_SUITE_COMMAND}(${JSON.stringify({
+    sessionId: normalizedSessionId,
+    sessionType: LINEAR_STAGE_MODE_SESSION_TYPES[mode],
+    repeats: normalizedRepeats,
+  })})`
+}
+
+export function parseLinearStageSuiteCommand(command: string): { mode: LinearStageMode; sessionId: number; sessionType: LinearStageSessionType; repeats: number } | undefined {
+  const trimmed = command.trim()
+  const match = trimmed.match(/^test\s+suite\s*\((.*)\)$/i)
+  if (!match) return undefined
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(match[1])
+  } catch {
+    return undefined
+  }
+
+  const request = isPlainObject(payload) ? payload : undefined
+  const sessionId = typeof request?.sessionId === 'number' ? request.sessionId : undefined
+  const repeats = request?.repeats === undefined ? 1 : typeof request.repeats === 'number' ? request.repeats : undefined
+  const rawSessionType = typeof request?.sessionType === 'string' ? request.sessionType.trim().toUpperCase() : undefined
+  const sessionType = rawSessionType && rawSessionType in LINEAR_STAGE_SESSION_TYPE_MODES ? rawSessionType as LinearStageSessionType : undefined
+
+  if (sessionType === undefined || sessionId === undefined || repeats === undefined) {
+    return undefined
+  }
+  if (!Number.isInteger(sessionId) || sessionId <= 0 || !Number.isInteger(repeats) || repeats <= 0) {
+    return undefined
+  }
+
+  return {
+    mode: LINEAR_STAGE_SESSION_TYPE_MODES[sessionType],
+    sessionId,
+    sessionType,
+    repeats,
+  }
+}
+
 function isFreshLinearStageArm(context?: LocalRunContext): boolean {
   if (!context?.stage_clear_confirmed || !context.stage_clear_arm_id || !context.stage_clear_armed_at) return false
   const armedAtMs = Date.parse(context.stage_clear_armed_at)
@@ -640,6 +661,10 @@ function validateCartridgeContext(
     return 'Cartridge command seal ID does not match the active station setting.'
   }
   return undefined
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function isKnownOption(value: string, options: string[]): boolean {

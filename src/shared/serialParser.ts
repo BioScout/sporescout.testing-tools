@@ -196,7 +196,13 @@ function asOptionalNumber(value: unknown): number | undefined {
 }
 
 function asOptionalLinearStageMode(value: unknown): MirroredEventRecord['linear_stage_mode'] {
-  return value === 'full' || value === 'mechanics' || value === 'optics' ? value : undefined
+  if (value === 'production_full' || value === 'mechanics_only' || value === 'optics_only') {
+    return value
+  }
+  if (value === 'LINEAR_STAGE_COMPREHENSIVE') return 'production_full'
+  if (value === 'LINEAR_STAGE_MECHANICS') return 'mechanics_only'
+  if (value === 'LINEAR_STAGE_OPTICS') return 'optics_only'
+  return undefined
 }
 
 function isCartridgeEvent(envelope: GuiEventEnvelope): boolean {

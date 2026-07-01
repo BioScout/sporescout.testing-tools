@@ -50,7 +50,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_STATION_SETTINGS,
-  LINEAR_STAGE_OPERATOR_MOTION_COMMANDS,
   LINEAR_STAGE_READINESS_COMMAND,
   canonicalHardwareId,
   isKnownOption,
@@ -124,6 +123,15 @@ interface MetricThreshold {
   label: string
 }
 
+interface LinearStageEvidence {
+  safety: string[]
+  scan: string[]
+  upload: string[]
+  artifacts: string[]
+  errors: string[]
+  issues: string[]
+}
+
 interface LinearStageSummary {
   runId: string
   command: string
@@ -135,6 +143,7 @@ interface LinearStageSummary {
   steps: LinearStageStep[]
   axes: AxisSummary[]
   metrics: NumericMetric[]
+  evidence: LinearStageEvidence
   raw: unknown
 }
 
@@ -218,12 +227,11 @@ type LiveLinearStageUpdate =
 
 const api = getTestingToolsApi()
 const HISTORY_PAGE_LIMIT = 500
-const DEFAULT_LINEAR_STAGE_MODE: LinearStageMode = 'full'
+const DEFAULT_LINEAR_STAGE_MODE: LinearStageMode = 'production_full'
 const DEFAULT_LINEAR_STAGE_COMMAND = commandForLinearStageMode(DEFAULT_LINEAR_STAGE_MODE)
 const ACTIVE_CONTEXT_CLEAR_DELAY_MS = 30_000
 const HISTORY_REFRESH_DELAY_MS = 350
-const ALLOWED_LINEAR_STAGE_COMMANDS = LINEAR_STAGE_OPERATOR_MOTION_COMMANDS
-type LinearStageCommand = (typeof ALLOWED_LINEAR_STAGE_COMMANDS)[number]
+type LinearStageCommand = string
 
 const LINEAR_FLOW_STEPS: Array<{ id: LinearWorkflowStep; label: string }> = [
   { id: 'connect', label: 'Connect' },
@@ -349,10 +357,12 @@ export function LinearStagePage() {
   const [activeRunId, setActiveRunId] = useState('')
   const [liveRun, setLiveRun] = useState<LiveLinearStageRun | null>(null)
   const progressTimer = useRef<number | undefined>()
+  const suiteCompletionTimer = useRef<number | undefined>()
   const contextClearTimer = useRef<number | undefined>()
   const historyRefreshTimer = useRef<number | undefined>()
   const operationToken = useRef(0)
   const liveRunRef = useRef<LiveLinearStageRun | null>(null)
+  const completedLinearRunIdsRef = useRef<Set<string>>(new Set())
   const serialAvailable = Boolean(window.testingTools)
 
   const operatorValid = isKnownOption(operator, settings.operators)
@@ -429,10 +439,16 @@ export function LinearStagePage() {
       setEvents((current) => [event, ...current].slice(0, 150))
       if (isLinearStageEvent(event)) {
         const liveUpdate = parseLiveLinearStageEvent(event, liveRunRef.current)
+        let nextRun = liveRunRef.current
         if (liveUpdate) {
-          setLiveRun((current) => applyLiveLinearStageUpdate(current, liveUpdate))
+          nextRun = applyLiveLinearStageUpdate(liveRunRef.current, liveUpdate)
+          liveRunRef.current = nextRun
+          setLiveRun(nextRun)
         }
         setLatestAction(`${event.event_name}: ${String(event.data.step_name ?? event.data.result ?? 'linear stage update')}`)
+        if (nextRun && isLinearStageTerminalSuiteEvent(event)) {
+          void completeLinearStageRunFromSuiteEvent(event, nextRun)
+        }
         scheduleHistoryRefresh()
       }
     })
@@ -596,10 +612,14 @@ export function LinearStagePage() {
       return
     }
 
-    const runId = `linear-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17)}-${crypto.randomUUID().slice(0, 8)}`
+    const suiteSessionId = buildLinearStageSuiteSessionId()
     const commandMode = modeForLinearStageCommand(selectedLinearCommand) ?? linearStageMode
-    const initialLiveRun = buildInitialLiveLinearStageRun(runId, selectedLinearCommand, commandMode)
+    const suiteCommand = commandForLinearStageMode(commandMode, suiteSessionId)
+    const runId = `linear-${suiteSessionId}-${crypto.randomUUID().slice(0, 8)}`
+    completedLinearRunIdsRef.current.delete(runId)
+    const initialLiveRun = buildInitialLiveLinearStageRun(runId, suiteCommand, commandMode)
     setActiveRunId(runId)
+    setLinearCommand(suiteCommand)
     setRunSummary(null)
     setLiveRun(initialLiveRun)
     liveRunRef.current = initialLiveRun
@@ -608,6 +628,7 @@ export function LinearStagePage() {
     setCurrentStep('run')
     setLatestAction('Running linear-stage test. Keep the stage clear.')
     startProgressTimer()
+    scheduleSuiteCompletionTimeout(runId, suiteCommand, commandMode)
 
     const context: LocalRunContext = {
       workflow: 'linear_stage',
@@ -625,10 +646,10 @@ export function LinearStagePage() {
       if (!arm.ok || !arm.armId) {
         throw new Error(arm.error ?? 'Stage-clear arm failed before the tester command was sent.')
       }
-      response = await api.runLinearStageTest(arm.armId, selectedLinearCommand)
+      response = await api.runLinearStageTest(arm.armId, suiteCommand)
     } catch (error) {
       stopProgressTimer()
-      const errorSummary = summarizeLiveLinearStageRun(markLiveRunCommandError(liveRunRef.current, error instanceof Error ? error.message : 'Command failed before completion.'), runId, selectedLinearCommand, commandMode)
+      const errorSummary = summarizeLiveLinearStageRun(markLiveRunCommandError(liveRunRef.current, error instanceof Error ? error.message : 'Command failed before completion.'), runId, suiteCommand, commandMode)
       if (errorSummary.steps.length > 0) {
         setRunSummary(errorSummary)
       }
@@ -639,15 +660,14 @@ export function LinearStagePage() {
       void api.setActiveRunContext(undefined)
       await refreshLocalRecords()
       return
-    } finally {
-      stopProgressTimer()
     }
 
     if (!response.accepted || response.timedOut || !response.response?.ok) {
+      stopProgressTimer()
       const liveFallback = summarizeLiveLinearStageRun(
         markLiveRunCommandError(liveRunRef.current, response.timedOut ? 'The command timed out before the final firmware response.' : response.error ?? response.response?.error),
         runId,
-        selectedLinearCommand,
+        suiteCommand,
         commandMode,
       )
       const summary = liveFallback.steps.length
@@ -672,6 +692,7 @@ export function LinearStagePage() {
     }
 
     if (response.response.result_omitted === true && response.response.result === undefined) {
+      stopProgressTimer()
       const liveFallback = summarizeLiveLinearStageRun(liveRunRef.current, runId, response.command, commandMode)
       const baseSummary = liveFallback.steps.length ? liveFallback : summarizeOmittedLinearStageResult(response.response, runId, response.command, commandMode)
       const summary: LinearStageSummary = {
@@ -695,6 +716,24 @@ export function LinearStagePage() {
       return
     }
 
+    if (isLinearStageSuiteQueueAcknowledgement(response.response.result)) {
+      const queuedMessage = 'Suite runner accepted the linear-stage request. Waiting for published suite/session completion payloads.'
+      setLatestAction(queuedMessage)
+      setLiveRun((current) => {
+        if (!current) return current
+        const nextRun = {
+          ...current,
+          metadata: [queuedMessage, ...current.metadata].slice(0, 30),
+        }
+        liveRunRef.current = nextRun
+        return nextRun
+      })
+      await refreshLocalRecords()
+      scheduleHistoryRefresh()
+      return
+    }
+
+    stopProgressTimer()
     const summary = summarizeLinearStageResult(response.response.result, runId, response.command, commandMode)
     setRunSummary(summary)
     setLiveRun(liveRunFromSummary(summary, liveRunRef.current))
@@ -703,6 +742,55 @@ export function LinearStagePage() {
     setCurrentStep('review')
     await refreshLocalRecords()
     scheduleContextClear(runId)
+    scheduleHistoryRefresh()
+  }
+
+  async function completeLinearStageRunFromSuiteEvent(event: GuiEventEnvelope, currentRun: LiveLinearStageRun) {
+    if (!currentRun.active && completedLinearRunIdsRef.current.has(currentRun.runId)) return
+    completedLinearRunIdsRef.current.add(currentRun.runId)
+    const eventStatus = parseEventStatus(event.data) ?? currentRun.overallStatus ?? 'fail'
+    const eventDetail = asRecord(event.data.detail ?? event.data.Detail)
+    const eventResult = resultCodeFromStatus(eventStatus)
+    const eventMode = normalizeLinearStageMode(event.data.linear_stage_mode ?? event.data.mode ?? event.data.session_type) ?? currentRun.mode
+    const finalRun: LiveLinearStageRun = {
+      ...currentRun,
+      active: false,
+      overallStatus: eventStatus,
+      metadata: [`Suite completion: ${event.event_name} ${statusLabel(eventStatus)}`, ...currentRun.metadata].slice(0, 30),
+    }
+    const summary = Object.keys(eventDetail).length > 0
+      ? summarizeLinearStageResult(
+          {
+            Name: asString(event.data.test_name) ?? 'LINEAR_STAGE_COMPREHENSIVE',
+            Result: eventResult,
+            mode: eventMode,
+            linear_stage_mode: eventMode,
+            Profile: event.data.profile,
+            Detail: eventDetail,
+            ...event.data,
+          },
+          currentRun.runId,
+          currentRun.command,
+          eventMode,
+        )
+      : summarizeLiveLinearStageRun(finalRun, currentRun.runId, currentRun.command, eventMode)
+    const finalSummary = summary.status === eventStatus
+      ? summary
+      : { ...summary, status: summary.evidence.issues.length ? 'fail' as const : eventStatus }
+
+    stopProgressTimer()
+    setRunSummary(finalSummary)
+    const nextLiveRun = liveRunFromSummary(finalSummary, finalRun)
+    liveRunRef.current = nextLiveRun
+    setLiveRun(nextLiveRun)
+    setDeviceStatus(finalSummary.status === 'pass' ? 'Ready' : finalSummary.status === 'warn' ? 'Warning' : 'Fault')
+    setLatestAction(finalSummary.status === 'pass' ? 'Linear-stage suite completed and published.' : 'Linear-stage suite completed with evidence that needs review.')
+    setCurrentStep('review')
+    if (finalSummary.status !== 'pass') {
+      setFaultText('Linear-stage suite completion payload reported failed or incomplete evidence.')
+    }
+    await refreshLocalRecords()
+    scheduleContextClear(currentRun.runId)
     scheduleHistoryRefresh()
   }
 
@@ -734,6 +822,7 @@ export function LinearStagePage() {
     setRunSummary(null)
     setLiveRun(null)
     liveRunRef.current = null
+    completedLinearRunIdsRef.current.clear()
     setStageClear(false)
     setActiveRunId('')
     setFaultText('')
@@ -748,6 +837,7 @@ export function LinearStagePage() {
     setRunSummary(null)
     setLiveRun(null)
     liveRunRef.current = null
+    completedLinearRunIdsRef.current.clear()
     setStageClear(false)
     setCurrentStep('clear')
     setFaultText('')
@@ -764,6 +854,7 @@ export function LinearStagePage() {
     setRunProgress(undefined)
     setLiveRun(null)
     liveRunRef.current = null
+    completedLinearRunIdsRef.current.clear()
     setStageClear(false)
     setReadiness(buildReadinessItems())
     setCurrentStep(step)
@@ -800,6 +891,7 @@ export function LinearStagePage() {
     setRunSummary(null)
     setLiveRun(null)
     liveRunRef.current = null
+    completedLinearRunIdsRef.current.clear()
     setStageClear(false)
     setCurrentStep(readinessReady ? 'clear' : currentStep)
     setLatestAction(`${LINEAR_STAGE_MODE_CONFIGS[nextMode].label} selected. Confirm stage clear before starting.`)
@@ -949,7 +1041,38 @@ export function LinearStagePage() {
       window.clearInterval(progressTimer.current)
       progressTimer.current = undefined
     }
+    clearSuiteCompletionTimer()
     setRunProgress(null)
+  }
+
+  function scheduleSuiteCompletionTimeout(runId: string, command: string, mode: LinearStageMode) {
+    clearSuiteCompletionTimer()
+    const config = LINEAR_STAGE_MODE_CONFIGS[mode]
+    suiteCompletionTimer.current = window.setTimeout(() => {
+      const currentRun = liveRunRef.current
+      if (!currentRun || currentRun.runId !== runId || !currentRun.active) return
+      const message = `Suite runner did not publish a completion payload within the ${config.timeoutLabel}.`
+      const failedRun = markLiveRunCommandError(currentRun, message)
+      if (!failedRun) return
+      const summary = summarizeLiveLinearStageRun(failedRun, runId, command, mode)
+      liveRunRef.current = failedRun
+      setLiveRun(failedRun)
+      setRunSummary({ ...summary, status: 'fail' })
+      setDeviceStatus('Fault')
+      setFaultText(message)
+      setLatestAction(message)
+      setCurrentStep('review')
+      setRunProgress(null)
+      void api.setActiveRunContext(undefined)
+      scheduleHistoryRefresh()
+    }, config.timeoutMs)
+  }
+
+  function clearSuiteCompletionTimer() {
+    if (suiteCompletionTimer.current !== undefined) {
+      window.clearTimeout(suiteCompletionTimer.current)
+      suiteCompletionTimer.current = undefined
+    }
   }
 
   return (
@@ -1269,6 +1392,7 @@ export function LinearStagePage() {
       return (
         <Stack spacing={2}>
           <LinearResultSummary summary={runSummary} />
+          <LinearEvidencePanel summary={runSummary} />
           <LiveLinearStagePanel liveRun={liveRun} elapsedMs={runProgress?.elapsedMs} />
           <AxisSummaryPanel summary={runSummary} />
           <MetricHistogramPanel summary={runSummary} />
@@ -1530,6 +1654,86 @@ function LinearResultSummary({ summary }: { summary: LinearStageSummary | null }
             <Metric label="Warnings" value={String(warned)} color={warned ? 'warning.main' : 'success.main'} />
           </Stack>
         </Stack>
+      </Stack>
+    </Box>
+  )
+}
+
+function LinearEvidencePanel({ summary }: { summary: LinearStageSummary | null }) {
+  if (!summary) return null
+
+  const evidence = summary.evidence
+  const hasIssues = evidence.issues.length > 0
+  const sections = [
+    { title: 'Safety state', lines: evidence.safety, empty: 'No explicit final safety fields were reported.' },
+    { title: 'Scan and optical evidence', lines: evidence.scan, empty: 'No scan or overlap evidence is expected for this mode.' },
+    { title: 'Upload and supporting files', lines: [...evidence.upload, ...evidence.artifacts], empty: 'No artifact or upload paths were reported.' },
+  ]
+
+  return (
+    <Box data-linear-stage-evidence-status={hasIssues ? 'fail' : 'clean'} sx={{ border: '1px solid', borderColor: hasIssues ? 'error.light' : 'success.light', borderRadius: 1, p: 1.5 }}>
+      <Stack spacing={1.25}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between">
+          <Box>
+            <Typography variant="subtitle1">Evidence review</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Final status includes safety, scan audit, artifact generation, upload, and optical overlap evidence.
+            </Typography>
+          </Box>
+          <Chip
+            size="small"
+            color={hasIssues ? 'error' : 'success'}
+            icon={hasIssues ? <ErrorOutlineIcon /> : <CheckCircleIcon />}
+            label={hasIssues ? 'Needs review' : 'Clean evidence'}
+          />
+        </Stack>
+
+        {hasIssues && (
+          <Alert severity="error">
+            <Stack spacing={0.5}>
+              {evidence.issues.map((issue) => (
+                <Typography key={issue} variant="body2">
+                  {issue}
+                </Typography>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+
+        {evidence.errors.length > 0 && (
+          <Alert severity="warning">
+            <Stack spacing={0.5}>
+              {evidence.errors.map((error) => (
+                <Typography key={error} variant="body2">
+                  {error}
+                </Typography>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 1 }}>
+          {sections.map((section) => (
+            <Box key={section.title} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.25, minWidth: 0 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                {section.title}
+              </Typography>
+              {section.lines.length ? (
+                <Stack spacing={0.5}>
+                  {section.lines.slice(0, 8).map((line) => (
+                    <Typography key={line} variant="caption" sx={{ display: 'block', overflowWrap: 'anywhere' }}>
+                      {line}
+                    </Typography>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  {section.empty}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Box>
       </Stack>
     </Box>
   )
@@ -2147,15 +2351,18 @@ function EngineeringDrawer(props: {
               error={!props.commandValid}
               onChange={(event) => props.onCommandChange(event.target.value)}
               helperText={props.commandValid
-                ? 'Operator flow uses explicit split-mode commands. Use engineering-only alternatives only when needed.'
-                : 'Select one of the allowed linear-stage commands below.'}
+                ? 'Operator flow uses suite-runner start commands so firmware publishes session, suite, test, and step payloads.'
+                : 'Select one of the suite-runner linear-stage commands below.'}
             />
             <Stack direction="row" spacing={1} flexWrap="wrap">
-              {ALLOWED_LINEAR_STAGE_COMMANDS.map((command) => (
-                <Button key={command} size="small" variant={props.command === command ? 'contained' : 'outlined'} onClick={() => props.onCommandChange(command)}>
-                  {command}
+              {LINEAR_STAGE_MODE_ORDER.map((mode) => {
+                const command = commandForLinearStageMode(mode)
+                return (
+                <Button key={mode} size="small" variant={props.command === command ? 'contained' : 'outlined'} onClick={() => props.onCommandChange(command)}>
+                  {LINEAR_STAGE_MODE_CONFIGS[mode].shortLabel}
                 </Button>
-              ))}
+                )
+              })}
             </Stack>
           </Stack>
         </EngineeringSection>
@@ -2422,26 +2629,30 @@ function summarizeLiveLinearStageRun(current: LiveLinearStageRun | null, runId: 
     error: step.error,
   }))
   const metrics = extractNumericMetrics(steps)
+  const raw = {
+    live_trace: true,
+    metadata: current?.metadata ?? [],
+    artifacts: current?.artifacts ?? [],
+    last_line: current?.lastLine,
+  }
+  const evidence = extractLinearStageEvidence(raw, steps, current?.mode ?? mode)
+  const status = evidence.issues.length ? 'fail' : current?.overallStatus ?? statusFromResult(undefined, steps)
   return {
     runId,
     command,
     mode: current?.mode ?? mode,
     testName: `LINEAR_STAGE_${(current?.mode ?? mode).toUpperCase()}_TEST`,
-    status: current?.overallStatus ?? statusFromResult(undefined, steps),
+    status,
     steps,
     axes: buildAxisSummaries(steps, metrics),
     metrics,
-    raw: {
-      live_trace: true,
-      metadata: current?.metadata ?? [],
-      artifacts: current?.artifacts ?? [],
-      last_line: current?.lastLine,
-    },
+    evidence,
+    raw,
   }
 }
 
 function liveRunFromSummary(summary: LinearStageSummary, previous: LiveLinearStageRun | null): LiveLinearStageRun {
-  const mode = summary.mode ?? previous?.mode ?? 'full'
+  const mode = summary.mode ?? previous?.mode ?? 'production_full'
   const completedAt = new Date().toISOString()
   return {
     runId: summary.runId,
@@ -2534,19 +2745,21 @@ function summarizeLinearStageResult(result: unknown, runId: string, command: str
   })
 
   const resultCode = asNumber(root.Result ?? root.result)
-  const status = statusFromResult(resultCode, steps)
   const metrics = extractNumericMetrics(steps)
+  const evidence = extractLinearStageEvidence(result, steps, mode)
+  const status = evidence.issues.length ? 'fail' : statusFromResult(resultCode, steps)
   return {
     runId,
     command,
     mode,
-    testName: asString(root.Name ?? root.name ?? root.test_name) ?? 'LINEAR_STAGE_TEST',
+    testName: asString(root.Name ?? root.name ?? root.test_name) ?? 'LINEAR_STAGE_COMPREHENSIVE',
     status,
     resultCode,
     profile: asString(root.Profile ?? root.profile),
     steps,
     axes: buildAxisSummaries(steps, metrics),
     metrics,
+    evidence,
     raw: result,
   }
 }
@@ -2555,7 +2768,7 @@ function summarizeOmittedLinearStageResult(response: { message?: string; result_
   const size = response.result_json_bytes ? `${response.result_json_bytes} bytes` : 'unknown size'
   return summarizeLinearStageResult(
     {
-      Name: 'LINEAR_STAGE_TEST',
+      Name: 'LINEAR_STAGE_COMPREHENSIVE',
       Result: 3,
       Detail: {
         '1 | Full result payload capture': {
@@ -2570,6 +2783,202 @@ function summarizeOmittedLinearStageResult(response: { message?: string; result_
     command,
     mode,
   )
+}
+
+interface EvidenceField {
+  key: string
+  value: unknown
+}
+
+function extractLinearStageEvidence(raw: unknown, steps: LinearStageStep[], mode: LinearStageMode): LinearStageEvidence {
+  const fields = [
+    ...flattenEvidenceFields(raw),
+    ...steps.flatMap((step) => flattenEvidenceFields({
+      step_name: step.name,
+      step_result: step.result,
+      expected: step.expected,
+      measured: step.measured,
+      error: step.error,
+    }, `step.${step.number}.${step.name}`)),
+  ]
+  const scanMode = mode === 'production_full'
+  const issues: string[] = []
+
+  const failedSteps = steps.filter((step) => step.result === 'Fail')
+  for (const step of failedSteps.slice(0, 5)) {
+    issues.push(`Step ${step.number} failed: ${step.name}${step.error ? ` - ${step.error}` : ''}`)
+  }
+  if (failedSteps.length > 5) {
+    issues.push(`${failedSteps.length - 5} additional failed step${failedSteps.length === 6 ? '' : 's'} reported.`)
+  }
+
+  if (evidenceBoolean(fields, /(^|\.)overall_passed$/i) === false) {
+    issues.push('Firmware final verdict reported overall_passed=false.')
+  }
+  if (evidenceBoolean(fields, /last_step_state_uncertain/i) === true) {
+    issues.push('Firmware reported the final linear-stage state as uncertain.')
+  }
+  if (evidenceBoolean(fields, /last_step_safe_to_continue/i) === false) {
+    issues.push('Firmware reported the final linear-stage state is not safe to continue.')
+  }
+
+  const scanCapturePassed = evidenceBoolean(fields, /scan_capture_passed/i)
+  const artifactGenerationPassed = evidenceBoolean(fields, /artifact_generation_passed/i)
+  const uploadRequested = evidenceBoolean(fields, /scan_artifact_upload_requested/i)
+  const uploadSupported = evidenceBoolean(fields, /scan_artifact_upload_supported/i)
+  const uploadAttempted = evidenceBoolean(fields, /scan_artifact_upload_attempted/i)
+  const uploadPassed = evidenceBoolean(fields, /scan_artifact_upload_passed|(^|\.)upload_passed$/i)
+  const uploadCompleted = evidenceBoolean(fields, /scan_artifact_upload_completed/i)
+  const uploadedSupportingFiles = evidenceBoolean(fields, /scan_artifact_uploaded_supporting_files/i)
+  const imagesCaptured = evidenceNumber(fields, /scan_artifact_images_captured|scan_artifact_uploaded_images|images captured|frame count|tile count/i)
+  const yPairCount = evidenceNumber(fields, /y pair count|y_adjacent|y adjacent/i)
+  const zPairCount = evidenceNumber(fields, /z pair count|z_adjacent|z adjacent/i)
+  const adjacentPairCount = evidenceNumber(fields, /adjacent[_\s-]*pair.*(?:count|overlays)|pair[_\s-]*overlay.*count/i)
+
+  if (scanMode) {
+    if (scanCapturePassed === false || (!hasPassingStep(steps, /scan capture/i) && imagesCaptured === undefined)) {
+      issues.push('Scan capture evidence is missing or failed.')
+    }
+    if (imagesCaptured !== undefined && imagesCaptured < 9) {
+      issues.push(`Scan capture recorded ${imagesCaptured} image${imagesCaptured === 1 ? '' : 's'}; expected 9 normal scan tiles.`)
+    }
+    if (artifactGenerationPassed === false || (!hasPassingStep(steps, /artifact generation/i) && artifactGenerationPassed !== true)) {
+      issues.push('Artifact generation evidence is missing or failed.')
+    }
+    if (!evidenceValueIncludes(fields, /scan_overlap_all_tiles\.png/i)) {
+      issues.push('Missing scan_overlap_all_tiles.png supporting artifact evidence.')
+    }
+    if (!evidenceValueIncludes(fields, /scan_overlap_adjacent_pairs\.png/i)) {
+      issues.push('Missing scan_overlap_adjacent_pairs.png supporting artifact evidence.')
+    }
+    if (uploadedSupportingFiles === false) {
+      issues.push('Supporting-file upload evidence reported false.')
+    }
+    if (uploadRequested !== true) {
+      issues.push('Scan artifact upload was not explicitly requested.')
+    }
+    if (uploadSupported === false || uploadAttempted === false || uploadPassed === false || uploadCompleted === false || (!hasPassingStep(steps, /^upload$/i) && uploadPassed !== true)) {
+      issues.push('Scan artifact upload evidence is missing or failed.')
+    }
+    if (imagesCaptured === undefined) {
+      issues.push('Missing image-count evidence for the 9 normal scan tiles.')
+    }
+    if (!((yPairCount !== undefined && yPairCount >= 6 && zPairCount !== undefined && zPairCount >= 6) || (adjacentPairCount !== undefined && adjacentPairCount >= 12))) {
+      issues.push('Missing adjacent-pair overlay evidence for 6 Y-adjacent and 6 Z-adjacent neighbors.')
+    }
+    if (!hasField(fields, /overlap_correlation|overlap_response|overlap_matched/i)) {
+      issues.push('Missing optical overlap evidence from scan audit pair results.')
+    }
+  }
+
+  for (const field of fields) {
+    if (/scan_artifact_upload_error|audit error|scan audit error/i.test(field.key) && hasMeaningfulErrorValue(field.value)) {
+      issues.push(`${evidenceLabel(field.key)}: ${compactInlineValue(field.value)}`)
+    }
+    if (/trackable.*passed|focus.*passed|y optical.*passed|z optical.*passed|structural.*passed|monotonic.*passed|overlap_matched/i.test(field.key) && evidenceBoolean([field], /.*/i) === false) {
+      issues.push(`${evidenceLabel(field.key)} reported false.`)
+    }
+  }
+
+  return {
+    safety: collectEvidenceLines(fields, /overall_passed|last_step|safe_to_continue|state_uncertain|recovered_to_home|stop_reason|detection_source/i),
+    scan: collectEvidenceLines(fields, /scan_capture|scan_audit|trackable|structural|monotonic|focus passed|optical passed|pair count|overlap|images captured|frame count|tile count/i),
+    upload: collectEvidenceLines(fields, /scan_artifact_upload|uploaded|upload_passed|cloud_scan_id|supporting_files|images_captured/i),
+    artifacts: collectArtifactEvidenceLines(raw, fields),
+    errors: collectEvidenceLines(fields, /error/i).filter((line) => !/: $/.test(line)),
+    issues: uniqueStrings(issues),
+  }
+}
+
+function flattenEvidenceFields(value: unknown, prefix = 'root', depth = 0): EvidenceField[] {
+  if (value === undefined || value === null || depth > 5) return []
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => flattenEvidenceFields(entry, `${prefix}.${index}`, depth + 1))
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => flattenEvidenceFields(entry, `${prefix}.${key}`, depth + 1))
+  }
+  return [{ key: prefix, value }]
+}
+
+function collectEvidenceLines(fields: EvidenceField[], keyPattern: RegExp, limit = 12): string[] {
+  return uniqueStrings(
+    fields
+      .filter((field) => keyPattern.test(field.key))
+      .map((field) => `${evidenceLabel(field.key)}: ${compactInlineValue(field.value)}`)
+      .filter((line) => !/:\s*(undefined|null)?$/i.test(line)),
+  ).slice(0, limit)
+}
+
+function collectArtifactEvidenceLines(raw: unknown, fields: EvidenceField[]): string[] {
+  const rootArtifacts = extractArtifactLines(asRecord(raw).artifacts)
+  const artifactFields = collectEvidenceLines(fields, /artifact|scan_path|scan_artifact_paths|supporting_files|cloud_scan_id|scan_overlap|uploaded_images/i, 16)
+  const pathValues = fields
+    .filter((field) => typeof field.value === 'string' && /scan_overlap|supporting_files|\.png|\.jpg|\.jpeg|scan/i.test(field.value))
+    .map((field) => `${evidenceLabel(field.key)}: ${field.value}`)
+  return uniqueStrings([...rootArtifacts, ...artifactFields, ...pathValues]).slice(0, 16)
+}
+
+function evidenceBoolean(fields: EvidenceField[], keyPattern: RegExp): boolean | undefined {
+  for (const field of fields) {
+    if (!keyPattern.test(field.key)) continue
+    const parsed = parseEvidenceBoolean(field.value)
+    if (parsed !== undefined) return parsed
+  }
+  return undefined
+}
+
+function parseEvidenceBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (value === 1) return true
+    if (value === 0) return false
+  }
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  if (['true', 'pass', 'passed', 'ok', '1'].includes(normalized)) return true
+  if (['false', 'fail', 'failed', 'error', '0'].includes(normalized)) return false
+  return undefined
+}
+
+function evidenceNumber(fields: EvidenceField[], keyPattern: RegExp): number | undefined {
+  for (const field of fields) {
+    if (!keyPattern.test(field.key)) continue
+    if (typeof field.value === 'number' && Number.isFinite(field.value)) return field.value
+    if (typeof field.value === 'string') {
+      const parsed = Number(field.value.trim())
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return undefined
+}
+
+function hasField(fields: EvidenceField[], keyPattern: RegExp): boolean {
+  return fields.some((field) => keyPattern.test(field.key))
+}
+
+function evidenceValueIncludes(fields: EvidenceField[], valuePattern: RegExp): boolean {
+  return fields.some((field) => typeof field.value === 'string' && valuePattern.test(field.value))
+}
+
+function hasPassingStep(steps: LinearStageStep[], stepPattern: RegExp): boolean {
+  return steps.some((step) => stepPattern.test(step.name) && step.result === 'Pass')
+}
+
+function hasMeaningfulErrorValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  const text = typeof value === 'string' ? value.trim() : JSON.stringify(value)
+  if (!text) return false
+  return !/^(none|null|undefined|ok|pass|passed|false)$/i.test(text)
+}
+
+function evidenceLabel(key: string): string {
+  const parts = key.split('.').filter((part) => !/^(root|step|\d+|expected|measured|context|Detail|detail)$/i.test(part))
+  return humanizeKey(parts.slice(-2).join(' ') || key)
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
 }
 
 function extractNumericMetrics(steps: LinearStageStep[]): NumericMetric[] {
@@ -2652,12 +3061,34 @@ function readinessItemFromCheck(item: ReadinessItem, result: Record<string, unkn
 
 function normalizeLinearStageCommand(command: string): LinearStageCommand | undefined {
   const trimmed = command.trim()
-  return ALLOWED_LINEAR_STAGE_COMMANDS.find((allowedCommand) => allowedCommand.toLowerCase() === trimmed.toLowerCase())
+  return modeForLinearStageCommand(trimmed) ? trimmed : undefined
+}
+
+function buildLinearStageSuiteSessionId(): number {
+  return Math.trunc(Date.now() % 2_000_000_000) || 1
 }
 
 function isLinearStageEvent(event: GuiEventEnvelope): boolean {
   const text = `${event.event_name} ${JSON.stringify(event.data)}`.toLowerCase()
   return text.includes('linear_stage') || text.includes('linear stage') || text.includes('linear-stage')
+}
+
+function isLinearStageTerminalSuiteEvent(event: GuiEventEnvelope): boolean {
+  const eventName = event.event_name.toLowerCase()
+  if (!eventName.includes('suite_update') && !eventName.includes('session_update')) return false
+  return parseEventStatus(event.data) !== undefined
+}
+
+function isLinearStageSuiteQueueAcknowledgement(result: unknown): boolean {
+  const record = asRecord(result)
+  return record.queued === true && typeof record.request === 'string'
+}
+
+function resultCodeFromStatus(status: LinearRunStatus): number {
+  if (status === 'pass') return 1
+  if (status === 'warn') return 2
+  if (status === 'fail') return 3
+  return 0
 }
 
 function parseLiveLinearStageSerialLine(line: string): LiveLinearStageUpdate | undefined {
@@ -2722,7 +3153,7 @@ function parseLiveLinearStageEvent(event: GuiEventEnvelope, activeRun?: LiveLine
   const context = asRecord(data.context)
   const stepName = asString(data.step_name) ?? asString(data.step) ?? asString(data.assert_name)
   const result = parseEventStepResult(data)
-  const eventMode = normalizeLinearStageMode(data.linear_stage_mode ?? data.mode ?? context.linear_stage_mode ?? context.mode) ?? activeRun?.mode
+  const eventMode = normalizeLinearStageMode(data.linear_stage_mode ?? data.mode ?? data.session_type ?? context.linear_stage_mode ?? context.mode ?? context.session_type) ?? activeRun?.mode
   const eventRunId = asString(data.linear_stage_run_id) ?? asString(context.linear_stage_run_id) ?? asString(data.run_uid) ?? asString(context.run_uid)
   const artifacts = extractArtifactLines(data.artifacts ?? context.artifacts)
   if ((eventName.includes('step_result') || asString(data.evt_type) === 'STEP_RESULT') && stepName) {
@@ -2743,7 +3174,7 @@ function parseLiveLinearStageEvent(event: GuiEventEnvelope, activeRun?: LiveLine
     } as LiveLinearStageUpdate
   }
 
-  if (eventName.includes('item_update') || eventName.includes('suite_update')) {
+  if (eventName.includes('suite_update') || eventName.includes('session_update')) {
     const status = parseEventStatus(data)
     if (status) {
       return {
@@ -2821,7 +3252,7 @@ function parseEventStepResult(data: Record<string, unknown>): LinearStepResult {
 }
 
 function parseEventStatus(data: Record<string, unknown>): LinearRunStatus | undefined {
-  const value = data.result ?? data.status ?? data.test_status ?? data.suite_status
+  const value = data.result ?? data.status ?? data.test_status ?? data.suite_status ?? data.suite_result ?? data.session_status
   if (typeof value === 'number') return value === 1 ? 'pass' : value === 2 ? 'warn' : value === 3 ? 'fail' : undefined
   if (typeof value !== 'string') return undefined
   const lower = value.toLowerCase()

@@ -20,13 +20,13 @@ import type {
 } from '../src/shared/contracts'
 import {
   ENGINEERING_PASSWORD,
-  LINEAR_STAGE_MOTION_COMMANDS,
   canonicalHardwareId,
   isEnclosureBaseId,
   isKnownOption,
   isNozzleId,
   isSealFixtureId,
   isTesterDeviceSerial,
+  parseLinearStageSuiteCommand,
   validateGuiCommand,
 } from '../src/shared/contracts'
 import { mirroredEventRecordFromEnvelope, parseSerialLine } from '../src/shared/serialParser'
@@ -508,7 +508,7 @@ function emitSerialLine(line: string, generation?: number): void {
 
 function resolvePendingResponse(response: GuiResponseEnvelope, generation?: number, source: 'gui' | 'legacy' = 'gui'): void {
   const index = pendingResponses.findIndex(
-    (pending) => pending.command === response.command && (generation === undefined || pending.generation === generation),
+    (pending) => serialResponseMatchesCommand(pending.command, response.command) && (generation === undefined || pending.generation === generation),
   )
   if (index === -1) {
     return
@@ -540,7 +540,7 @@ function resolvePendingResponse(response: GuiResponseEnvelope, generation?: numb
 }
 
 function removePending(command: string, generation?: number): void {
-  const index = pendingResponses.findIndex((pending) => pending.command === command && (generation === undefined || pending.generation === generation))
+  const index = pendingResponses.findIndex((pending) => serialResponseMatchesCommand(pending.command, command) && (generation === undefined || pending.generation === generation))
   if (index !== -1) {
     const [pending] = pendingResponses.splice(index, 1)
     clearPendingTimers(pending)
@@ -549,6 +549,11 @@ function removePending(command: string, generation?: number): void {
 
 function shouldWaitForLegacyResponse(response: GuiResponseEnvelope): boolean {
   return response.ok === true && response.result_omitted === true && response.result === undefined
+}
+
+function serialResponseMatchesCommand(pendingCommand: string, responseCommand: string): boolean {
+  if (pendingCommand === responseCommand) return true
+  return parseLinearStageSuiteCommand(pendingCommand) !== undefined && responseCommand.trim().toLowerCase() === 'test suite'
 }
 
 function mergeCompactFallbackMetadata(response: GuiResponseEnvelope, compactFallback?: GuiResponseEnvelope): GuiResponseEnvelope {
@@ -702,8 +707,7 @@ function serialResponseTimeoutMs(command: string): number {
 }
 
 function isLinearStageMotionCommandText(command: string): boolean {
-  const normalized = command.trim().toLowerCase()
-  return LINEAR_STAGE_MOTION_COMMANDS.some((candidate) => candidate === normalized)
+  return parseLinearStageSuiteCommand(command) !== undefined
 }
 
 function consumeLinearStageMotionArm(): void {
@@ -838,7 +842,7 @@ function normalizeCartridgePhase(value?: unknown): LocalRunContext['cartridge_ph
 }
 
 function normalizeLinearStageMode(value?: unknown): LinearStageMode | undefined {
-  return value === 'full' || value === 'mechanics' || value === 'optics' ? value : undefined
+  return value === 'production_full' || value === 'mechanics_only' || value === 'optics_only' ? value : undefined
 }
 
 function cleanContextValue(value?: unknown): string | undefined {

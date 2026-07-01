@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LINEAR_STAGE_COMMAND_MODE_ALIASES,
   LINEAR_STAGE_MODE_COMMANDS,
   LINEAR_STAGE_MOTION_COMMANDS,
+  buildLinearStageSuiteCommand,
   linearStageModeForCommand,
+  parseLinearStageSuiteCommand,
   validateGuiCommand,
   type LinearStageMode,
   type LocalRunContext,
@@ -22,6 +23,18 @@ const cartridgeContext: LocalRunContext = {
   cartridge_phase: 'open',
 }
 
+const linearStageContext: LocalRunContext = {
+  workflow: 'linear_stage',
+  linear_stage_run_id: 'linear-1',
+  linear_stage_mode: 'production_full',
+  operator: 'Codex QA',
+  batch: 'P1-DEV-2026-05',
+  tester_device_serial: 'SS-A-001-101A-0013',
+  stage_clear_confirmed: true,
+  stage_clear_arm_id: 'arm-1',
+  stage_clear_armed_at: new Date().toISOString(),
+}
+
 describe('GUI command policy', () => {
   it('allows cartridge and readiness commands used by the operator workflow when context matches', () => {
     expect(validateGuiCommand('test cartridge_leak prepare').ok).toBe(true)
@@ -37,98 +50,66 @@ describe('GUI command policy', () => {
     expect(validateGuiCommand('test cartridge_leak nozzle run-2 NOZL-0001', { ...cartridgeContext, cartridge_phase: 'nozzle', run_uid: 'run-1' }).ok).toBe(false)
   })
 
-  it('blocks linear-stage motion until stage-clear context is armed', () => {
-    expect(validateGuiCommand('test linear_stage full').ok).toBe(false)
+  it('blocks linear-stage suite start until stage-clear context is armed', () => {
+    const command = buildLinearStageSuiteCommand('production_full', 101)
 
-    const allowed = validateGuiCommand('test step', {
-      workflow: 'linear_stage',
-      linear_stage_run_id: 'linear-1',
-      linear_stage_mode: 'full',
-      operator: 'Codex QA',
-      batch: 'P1-DEV-2026-05',
-      tester_device_serial: 'SS-A-001-101A-0013',
-      stage_clear_confirmed: true,
-      stage_clear_arm_id: 'arm-1',
-      stage_clear_armed_at: new Date().toISOString(),
-    }, { allowLinearStageMotion: true, allowEngineeringLinearStageMotion: true })
+    expect(validateGuiCommand(command).ok).toBe(false)
+    expect(validateGuiCommand(command, linearStageContext).ok).toBe(false)
 
+    const allowed = validateGuiCommand(command, linearStageContext, { allowLinearStageMotion: true })
     expect(allowed.ok).toBe(true)
     expect(allowed.ok && allowed.consumesLinearStageArm).toBe(true)
   })
 
-  it('allows canonical split-mode linear-stage commands only when the armed mode matches', () => {
-    const baseContext: LocalRunContext = {
-      workflow: 'linear_stage',
-      linear_stage_run_id: 'linear-1',
-      operator: 'Codex QA',
-      batch: 'P1-DEV-2026-05',
-      tester_device_serial: 'SS-A-001-101A-0013',
-      stage_clear_confirmed: true,
-      stage_clear_arm_id: 'arm-1',
-      stage_clear_armed_at: new Date().toISOString(),
+  it('allows canonical linear-stage suite commands only when the armed mode matches', () => {
+    const mismatch: Record<LinearStageMode, LinearStageMode> = {
+      production_full: 'mechanics_only',
+      mechanics_only: 'production_full',
+      optics_only: 'production_full',
     }
 
     for (const [mode, command] of Object.entries(LINEAR_STAGE_MODE_COMMANDS) as Array<[LinearStageMode, string]>) {
-      expect(validateGuiCommand(command, { ...baseContext, linear_stage_mode: mode }).ok).toBe(false)
+      expect(validateGuiCommand(command, { ...linearStageContext, linear_stage_mode: mode }).ok).toBe(false)
 
-      const allowed = validateGuiCommand(command, { ...baseContext, linear_stage_mode: mode }, { allowLinearStageMotion: true })
+      const allowed = validateGuiCommand(command, { ...linearStageContext, linear_stage_mode: mode }, { allowLinearStageMotion: true })
       expect(allowed.ok, command).toBe(true)
       expect(allowed.ok && allowed.consumesLinearStageArm).toBe(true)
 
-      expect(validateGuiCommand(command, { ...baseContext, linear_stage_mode: 'full' === mode ? 'mechanics' : 'full' }, { allowLinearStageMotion: true }).ok).toBe(false)
+      expect(validateGuiCommand(command, { ...linearStageContext, linear_stage_mode: mismatch[mode] }, { allowLinearStageMotion: true }).ok).toBe(false)
       expect(linearStageModeForCommand(command)).toBe(mode)
     }
   })
 
-  it('maps engineering aliases to modes but keeps them out of normal operator dispatch', () => {
-    const baseContext: LocalRunContext = {
-      workflow: 'linear_stage',
-      linear_stage_run_id: 'linear-1',
-      linear_stage_mode: 'mechanics',
-      operator: 'Codex QA',
-      batch: 'P1-DEV-2026-05',
-      tester_device_serial: 'SS-A-001-101A-0013',
-      stage_clear_confirmed: true,
-      stage_clear_arm_id: 'arm-1',
-      stage_clear_armed_at: new Date().toISOString(),
-    }
+  it('parses explicit suite runner requests without preserving legacy command aliases', () => {
+    const command = buildLinearStageSuiteCommand('optics_only', 40226, 2)
 
-    expect(linearStageModeForCommand('test step_mechanics')).toBe('mechanics')
-    expect(LINEAR_STAGE_COMMAND_MODE_ALIASES['test step_optics']).toBe('optics')
-    expect(validateGuiCommand('test step_mechanics', baseContext, { allowLinearStageMotion: true }).ok).toBe(false)
-    expect(validateGuiCommand('test step_mechanics', baseContext, { allowLinearStageMotion: true, allowEngineeringLinearStageMotion: true }).ok).toBe(true)
+    expect(parseLinearStageSuiteCommand(command)).toEqual({
+      mode: 'optics_only',
+      sessionId: 40226,
+      sessionType: 'LINEAR_STAGE_OPTICS',
+      repeats: 2,
+    })
+    expect(linearStageModeForCommand('test linear_stage full')).toBeUndefined()
+    expect(linearStageModeForCommand('test step_mechanics')).toBeUndefined()
+    expect(linearStageModeForCommand('test suite({"sessionId":40226,"sessionType":"LINEAR_STAGE_PRODUCTION_FULL","repeats":1})')).toBeUndefined()
+    expect(validateGuiCommand('test step_mechanics', linearStageContext, { allowLinearStageMotion: true, allowEngineeringLinearStageMotion: true }).ok).toBe(false)
   })
 
   it('expires stale linear-stage stage-clear confirmations', () => {
     const staleContext: LocalRunContext = {
-      workflow: 'linear_stage',
-      linear_stage_run_id: 'linear-1',
-      linear_stage_mode: 'full',
-      operator: 'Codex QA',
-      batch: 'P1-DEV-2026-05',
-      tester_device_serial: 'SS-A-001-101A-0013',
-      stage_clear_confirmed: true,
-      stage_clear_arm_id: 'arm-1',
+      ...linearStageContext,
       stage_clear_armed_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
     }
 
-    const result = validateGuiCommand('test linear_stage full', staleContext, { allowLinearStageMotion: true })
+    const result = validateGuiCommand(buildLinearStageSuiteCommand('production_full', 101), staleContext, { allowLinearStageMotion: true })
     expect(result.ok).toBe(false)
     if (!('error' in result)) throw new Error('Expected stale stage-clear validation to fail.')
     expect(result.error).toContain('expired')
   })
 
-  it('matches linear-stage motion commands exactly without trailing arguments', () => {
+  it('matches linear-stage suite commands exactly without trailing arguments', () => {
     for (const command of LINEAR_STAGE_MOTION_COMMANDS) {
-      expect(validateGuiCommand(`${command} extra`, {
-        workflow: 'linear_stage',
-        linear_stage_run_id: 'linear-1',
-        linear_stage_mode: 'full',
-        operator: 'Codex QA',
-        batch: 'P1-DEV-2026-05',
-        tester_device_serial: 'SS-A-001-101A-0013',
-        stage_clear_confirmed: true,
-      }).ok).toBe(false)
+      expect(validateGuiCommand(`${command} extra`, linearStageContext, { allowLinearStageMotion: true }).ok).toBe(false)
     }
   })
 
