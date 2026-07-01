@@ -48,6 +48,9 @@ let connectionGeneration = 0
 let engineeringUnlocked = false
 let linearStageRunInFlight: { command: string; startedAt: string } | undefined
 let appShutdownInProgress = false
+let updateCheckInFlight: Promise<UpdateCheckResult> | undefined
+let automaticInstallRequested = false
+let automaticInstallStarted = false
 
 interface PendingResponse {
   command: string
@@ -95,8 +98,10 @@ function createWindow(): void {
 app.whenReady().then(() => {
   log.initialize()
   autoUpdater.logger = log
-  autoUpdater.autoDownload = false
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
   store = new LocalStorageStore(app.getPath('userData'))
+  configureAutoUpdater()
   activeRunContext = store.getActiveRunContext()
   if (validateRunContextAgainstSettings(activeRunContext)) {
     activeRunContext = undefined
@@ -104,6 +109,7 @@ app.whenReady().then(() => {
   }
   registerIpcHandlers()
   createWindow()
+  scheduleStartupUpdateCheck()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -368,6 +374,86 @@ function registerIpcHandlers(): void {
   ipcMain.handle('storage:getSummary', async () => store.getStorageSummary())
   ipcMain.handle('storage:getHistoricalRecords', async (_event, query?: HistoricalRecordsQuery) => store.getHistoricalRecords(query))
   ipcMain.handle('updates:check', async () => checkForUpdates())
+}
+
+function configureAutoUpdater(): void {
+  autoUpdater.on('update-available', (info) => {
+    saveUpdateStatus({
+      checked_at: new Date().toISOString(),
+      status: 'available',
+      version: info.version,
+      message: 'Update metadata was found. Downloading in the background.',
+    })
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    saveUpdateStatus({
+      checked_at: new Date().toISOString(),
+      status: 'current',
+      version: info.version ?? app.getVersion(),
+      message: 'No newer release is available.',
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    saveUpdateStatus({
+      checked_at: new Date().toISOString(),
+      status: 'available',
+      version: info.version,
+      message: canInstallDownloadedUpdateNow()
+        ? 'Update downloaded. Restarting into the new release.'
+        : 'Update downloaded. It will install when the app exits.',
+    })
+    if (automaticInstallRequested) {
+      installDownloadedUpdateWhenSafe()
+    }
+  })
+
+  autoUpdater.on('error', (error) => {
+    saveUpdateStatus({
+      checked_at: new Date().toISOString(),
+      status: 'failed',
+      version: app.getVersion(),
+      message: error instanceof Error ? error.message : 'Update check failed.',
+    })
+  })
+}
+
+function scheduleStartupUpdateCheck(): void {
+  if (!app.isPackaged || process.env.SPORESCOUT_TESTING_TOOLS_DISABLE_AUTO_UPDATE === '1') {
+    return
+  }
+
+  const timer = setTimeout(() => {
+    void checkForUpdates({ installWhenDownloaded: true })
+  }, 2500)
+  timer.unref?.()
+}
+
+function saveUpdateStatus(result: UpdateCheckResult): void {
+  try {
+    store?.saveUpdateCheck(result)
+  } catch (error) {
+    log.warn('Unable to save update status', error)
+  }
+}
+
+function canInstallDownloadedUpdateNow(): boolean {
+  return !appShutdownInProgress && connectionMode === undefined && !serialPort && !mockDevice && !linearStageRunInFlight && pendingResponses.length === 0
+}
+
+function installDownloadedUpdateWhenSafe(): void {
+  if (automaticInstallStarted || !canInstallDownloadedUpdateNow()) {
+    return
+  }
+  automaticInstallStarted = true
+  setTimeout(() => {
+    if (!canInstallDownloadedUpdateNow()) {
+      automaticInstallStarted = false
+      return
+    }
+    autoUpdater.quitAndInstall(false, true)
+  }, 1500)
 }
 
 async function dispatchCommand(
@@ -863,7 +949,21 @@ function hasControlCharacter(value: string): boolean {
   })
 }
 
-async function checkForUpdates(): Promise<UpdateCheckResult> {
+async function checkForUpdates(options: { installWhenDownloaded?: boolean } = {}): Promise<UpdateCheckResult> {
+  if (options.installWhenDownloaded) {
+    automaticInstallRequested = true
+  }
+  if (updateCheckInFlight) {
+    return updateCheckInFlight
+  }
+
+  updateCheckInFlight = runUpdateCheck(options).finally(() => {
+    updateCheckInFlight = undefined
+  })
+  return updateCheckInFlight
+}
+
+async function runUpdateCheck(options: { installWhenDownloaded?: boolean }): Promise<UpdateCheckResult> {
   const checked_at = new Date().toISOString()
 
   try {
@@ -873,7 +973,9 @@ async function checkForUpdates(): Promise<UpdateCheckResult> {
           checked_at,
           status: 'available',
           version: update.updateInfo.version,
-          message: 'Update metadata was found. Install remains non-blocking.',
+          message: options.installWhenDownloaded
+            ? 'Update metadata was found. Downloading and will restart when safe.'
+            : 'Update metadata was found. Downloading in the background.',
         }
       : {
           checked_at,
@@ -882,7 +984,7 @@ async function checkForUpdates(): Promise<UpdateCheckResult> {
           message: 'No update metadata was returned.',
         }
 
-    store.saveUpdateCheck(result)
+    saveUpdateStatus(result)
     return result
   } catch (error) {
     const result: UpdateCheckResult = {
@@ -891,7 +993,7 @@ async function checkForUpdates(): Promise<UpdateCheckResult> {
       version: app.getVersion(),
       message: error instanceof Error ? error.message : 'Update check failed.',
     }
-    store.saveUpdateCheck(result)
+    saveUpdateStatus(result)
     return result
   }
 }
