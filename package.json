@@ -1,7 +1,7 @@
 {
   "name": "sporescout.testing-tools",
   "private": true,
-  "version": "0.17.6",
+  "version": "0.17.7",
   "description": "SporeScout manufacturing testing tools local dashboard app",
   "author": "BioScout",
   "type": "module",
