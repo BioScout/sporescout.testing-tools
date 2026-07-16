@@ -1,7 +1,7 @@
 {
   "name": "sporescout.testing-tools",
   "private": true,
-  "version": "0.17.8",
+  "version": "0.17.9",
   "description": "SporeScout manufacturing testing tools local dashboard app",
   "author": "BioScout",
   "type": "module",
@@ -21,7 +21,8 @@
     "dist:portable": "npm run build && electron-builder --win portable --publish never",
     "dist:installer": "npm run build && electron-builder --win nsis --publish never",
     "dist:all": "npm run build && electron-builder --win portable nsis --publish never",
-    "release:portable": "npm run build && electron-builder --win portable --publish always"
+    "release:portable": "npm run build && electron-builder --win portable --publish always",
+    "release:all": "npm run build && electron-builder --win portable nsis --publish always"
   },
   "dependencies": {
     "@emotion/react": "^11.11.4",
