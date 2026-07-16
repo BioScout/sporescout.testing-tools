@@ -156,7 +156,7 @@ function registerIpcHandlers(): void {
     }
 
     await relockSolenoidBeforeDisconnect()
-    disconnectSerial()
+    await disconnectSerial()
 
     const exactPort = process.env.SPORESCOUT_TESTING_TOOLS_EXACT_PORT?.trim()
     if (request.mode === 'mock') {
@@ -220,7 +220,7 @@ function registerIpcHandlers(): void {
 
       return { ok: true, mode: 'serial' as const, path: request.path }
     } catch (error) {
-      disconnectSerial()
+      await disconnectSerial()
       return {
         ok: false,
         mode: 'serial' as const,
@@ -235,7 +235,7 @@ function registerIpcHandlers(): void {
       return { ok: false, error: `Cannot disconnect while ${linearStageRunInFlight.command} is running.` }
     }
     await relockSolenoidBeforeDisconnect()
-    disconnectSerial()
+    await disconnectSerial()
     return { ok: true }
   })
 
@@ -445,7 +445,7 @@ function sendSerialCommand(command: string, generation: number, linearStageMotio
     const timeout = setTimeout(() => {
       removePending(command, generation)
       resolve({ accepted: true, command, timedOut: true })
-      disconnectSerial()
+      void disconnectSerial()
     }, serialResponseTimeoutMs(command))
 
     pendingResponses.push({
@@ -582,7 +582,7 @@ async function shutdownAfterWindowsClosed(): Promise<void> {
   try {
     await relockSolenoidBeforeDisconnect()
   } finally {
-    disconnectSerial()
+    await disconnectSerial()
     store?.close()
     if (process.platform !== 'darwin') {
       app.quit()
@@ -602,7 +602,7 @@ async function relockSolenoidBeforeDisconnect(): Promise<void> {
   }
 }
 
-function disconnectSerial(): void {
+async function disconnectSerial(): Promise<void> {
   linearStageRunInFlight = undefined
   clearSolenoidRelockTimer()
   connectionGeneration += 1
@@ -619,10 +619,13 @@ function disconnectSerial(): void {
   mockDevice = null
   connectionMode = undefined
 
-  if (serialPort?.isOpen) {
-    serialPort.close()
-  }
+  const portToClose = serialPort
   serialPort = null
+  if (portToClose?.isOpen) {
+    await new Promise<void>((resolve) => {
+      portToClose.close(() => resolve())
+    })
+  }
   emitConnectionStatus({ connected: false, message: 'Serial device disconnected.' })
 }
 

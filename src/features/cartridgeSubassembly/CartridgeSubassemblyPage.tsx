@@ -1467,7 +1467,12 @@ export function CartridgeSubassemblyPage() {
           </Box>
           <ReadinessList items={readiness} />
           <Stack direction="row" spacing={1}>
-            <Button variant="contained" startIcon={<UsbIcon />} onClick={connectTester}>
+            <Button
+              variant="contained"
+              startIcon={<UsbIcon />}
+              onClick={connectTester}
+              disabled={connected || connectionAttemptInFlight.current}
+            >
               Connect tester
             </Button>
             <Button startIcon={<RefreshIcon />} onClick={() => runReadiness()} disabled={!connected}>
